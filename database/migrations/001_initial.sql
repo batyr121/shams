@@ -1,0 +1,26 @@
+BEGIN;
+CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE admin_users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),email text UNIQUE NOT NULL,password_hash text NOT NULL,role text NOT NULL DEFAULT 'admin' CHECK(role='admin'),created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE admin_sessions(token_hash text PRIMARY KEY,admin_id uuid NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL);
+CREATE TABLE rate_limits(key text PRIMARY KEY,attempts int NOT NULL DEFAULT 1,reset_at timestamptz NOT NULL);
+CREATE TABLE event_settings(id int PRIMARY KEY CHECK(id=1),starts_at timestamptz NOT NULL DEFAULT '2026-11-26 18:00+05',location text NOT NULL DEFAULT 'School Grand Hall',description text NOT NULL DEFAULT 'One extraordinary evening. A thousand unforgettable memories.',dress_code text NOT NULL DEFAULT 'Black tie & evening gowns',registration_open boolean NOT NULL DEFAULT true,registration_deadline timestamptz NOT NULL DEFAULT '2026-11-26 12:00+05',voting_status text NOT NULL DEFAULT 'closed' CHECK(voting_status IN('open','paused','closed')),results_published boolean NOT NULL DEFAULT false,reveal_at timestamptz,tie_winner uuid,tie_procedure text);
+INSERT INTO event_settings(id) VALUES(1);
+CREATE SEQUENCE couple_number;
+CREATE TABLE couple_applications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),first_name text NOT NULL CHECK(length(first_name) BETWEEN 2 AND 80),second_name text NOT NULL CHECK(length(second_name) BETWEEN 2 AND 80),group_name text NOT NULL CHECK(length(group_name) BETWEEN 1 AND 40),couple_name text NOT NULL DEFAULT '' CHECK(length(couple_name)<=80),contact text NOT NULL CHECK(length(contact) BETWEEN 3 AND 160),consent boolean NOT NULL CHECK(consent),status text NOT NULL DEFAULT 'pending' CHECK(status IN('pending','approved','rejected')),photo_path text NOT NULL DEFAULT '',number int UNIQUE,sort_order int NOT NULL DEFAULT 0,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE media(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),couple_id uuid REFERENCES couple_applications(id) ON DELETE CASCADE,kind text NOT NULL CHECK(kind IN('couple','gallery')),content bytea NOT NULL CHECK(octet_length(content)<=5242880),mime text NOT NULL CHECK(mime IN('image/jpeg','image/png','image/webp')),created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE voting_sessions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),label text NOT NULL DEFAULT 'The Grand Ball 2026',active boolean NOT NULL DEFAULT true,created_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX one_active_session ON voting_sessions(active) WHERE active;
+INSERT INTO voting_sessions DEFAULT VALUES;
+CREATE TABLE voting_tickets(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),session_id uuid NOT NULL REFERENCES voting_sessions(id),token_hash text UNIQUE NOT NULL,used_at timestamptz,revoked boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE votes(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),ticket_id uuid UNIQUE NOT NULL REFERENCES voting_tickets(id),session_id uuid NOT NULL REFERENCES voting_sessions(id),couple_id uuid NOT NULL REFERENCES couple_applications(id) ON DELETE RESTRICT,created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX votes_couple_idx ON votes(couple_id);
+CREATE INDEX sessions_expiry_idx ON admin_sessions(expires_at);
+CREATE TABLE event_program(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,time text NOT NULL CHECK(time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),title text NOT NULL CHECK(length(title) BETWEEN 1 AND 100),description text NOT NULL DEFAULT '' CHECK(length(description)<=500),sort_order int NOT NULL DEFAULT 0);
+INSERT INTO event_program(time,title,description,sort_order) VALUES('18:00','The grand arrival','Step into the evening. Find your place in the story.',0),('18:30','Let the ball begin','A royal welcome and the ceremonial opening.',1),('19:00','The first waltz','The floor is yours. Let the music lead.',2),('19:30','A little magic','Performances, surprises, and moments to remember.',3),('20:00','Crown the evening','Cast your vote for the best couple of the ball.',4),('20:30','The royal reveal','One unforgettable announcement. A well-deserved crown.',5),('21:00','One last dance','A beautiful ending. A memory that stays.',6);
+CREATE TABLE gallery_images(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),media_id uuid UNIQUE NOT NULL REFERENCES media(id) ON DELETE CASCADE,caption text NOT NULL CHECK(length(caption) BETWEEN 1 AND 200),sort_order int NOT NULL DEFAULT 0);
+CREATE TABLE audit_log(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,actor uuid REFERENCES admin_users(id) ON DELETE SET NULL,action text NOT NULL,details jsonb NOT NULL DEFAULT '{}',created_at timestamptz NOT NULL DEFAULT now());
+-- Browsers have no database credentials. Only the application server connects.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+INSERT INTO schema_migrations(version) VALUES('001_initial');
+COMMIT;

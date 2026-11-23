@@ -1,59 +1,169 @@
-# The Grand Ball
+# Шәмші Қайырымдылық Балы 2026 — PostgreSQL
 
-Next.js App Router, React, TypeScript, Tailwind 4, Supabase PostgreSQL/Auth/Storage, GSAP + ScrollTrigger, Framer Motion, Lucide and QRCode.
+Сайт на Next.js App Router, React и TypeScript. Собственный backend на Node.js подключается к **обычному PostgreSQL через `pg`**. Supabase, внешняя авторизация и внешнее файловое хранилище не используются.
 
-## Run locally
+## Локальный запуск без Docker
 
-Use Node.js 22 or newer.
+```sh
+npm ci
+npm run local
+```
+
+Команда запускает настоящий PostgreSQL на `127.0.0.1:55432` и сайт на `http://localhost:3000`, применяет миграции и создаёт организатора. Данные базы сохраняются в игнорируемой папке `.data/postgres`. Логин и пароль находятся в приватном `.env.local`. Остановка через Ctrl+C сохраняет базу; повторный запуск использует те же данные. Если `.env.local` уже настроен на другую базу, команда не перезаписывает его — используйте `npm run dev`.
+
+## Быстрый запуск через Docker
+
+Требуются Docker Engine и Docker Compose.
 
 ```sh
 npm install
-cp .env.example .env.local
+npm run setup
+```
+
+Команда создаёт приватный `.env` со случайными паролями. Откройте его, укажите `ADMIN_EMAIL` и при необходимости замените `ADMIN_PASSWORD`. Пароль организатора не выводится в терминал. Затем:
+
+```sh
+docker compose up --build -d
+```
+
+Откройте `http://localhost:3000`, админку — `http://localhost:3000/admin`. Войдите с данными из `.env`.
+
+Compose запускает PostgreSQL 17, применяет миграции, создаёт ограниченную роль `ball_app`, подготавливает администратора и запускает приложение под непривилегированным пользователем ОС. База и фотографии сохраняются в Docker volume `postgres_data`; PostgreSQL не публикует порт наружу. Повторный запуск сервиса `migrate` обновляет пароль организатора из `.env` и отзывает его прежние сессии.
+
+```sh
+docker compose logs --tail=100 app
+docker compose down
+```
+
+`down` сохраняет данные. Не используйте `down -v`, если не намерены удалить базу и фотографии.
+
+## Существующий PostgreSQL / локальная разработка
+
+Нужны Node.js 22+ и PostgreSQL 17+. Создайте пустую базу. Скопируйте `.env.example` в `.env.local`, задайте адрес базы в `DATABASE_URL` и `APP_ORIGIN=http://localhost:3000`.
+
+1. Сначала укажите в `DATABASE_URL` роль владельца базы и выполните:
+
+```sh
+npm run db:migrate
+npm run db:role
+npm run admin:create
+```
+
+Для `db:role` нужен `POSTGRES_APP_PASSWORD` длиной от 16 символов; для `admin:create` — `ADMIN_EMAIL` и `ADMIN_PASSWORD` длиной от 12 символов. Команды читают `.env.local`, а явно переданные переменные окружения имеют приоритет. Пароли не передаются аргументами командной строки.
+
+2. После настройки замените `DATABASE_URL` на подключение роли `ball_app` и запустите:
+
+```sh
 npm run dev
 ```
 
-Open http://localhost:3000. Until Supabase is configured, registration and voting clearly indicate that live services are unavailable. No submissions, couples, results, or administrator sessions are simulated. The initial event program is an editable suggested schedule; confirm the start time (initially 18:00 Aqtau), venue (initially School Grand Hall), and program with the organizer before inviting guests.
+Миграции лежат в `database/migrations`, повторно не применяются и защищены advisory lock от параллельного запуска. Изменение пароля администратора через `admin:create` отзывает все его сессии. Не запускайте рабочее приложение с суперпользователем PostgreSQL. Для удалённой базы используйте TLS с проверкой сертификата, например параметры `sslmode=verify-full&sslrootcert=/path/to/ca.pem` в серверной строке подключения. При специальных символах в пароле требуется URL-кодирование; генератор использует безопасные для URL hex-строки.
 
-## Connect the real backend
+## Что хранится в PostgreSQL
 
-1. Create a Supabase project. Run `supabase/migrations/202611230001_grand_ball.sql` in the SQL Editor, or link the project and run `supabase db push`. Use a fresh project: migration creates tables, storage buckets, policies and functions.
-2. Put the project URL and public anon key in `.env.local` as `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Never put a service-role key in this app. Restart the development server after changing environment values.
-3. Create an organizer account in Supabase Authentication. Disable public signups if not needed. In the SQL Editor, grant the role using the account's UUID:
+- Организаторы, scrypt-хеши паролей и хешированные серверные сессии.
+- Настройки события, программа, заявки и согласия участников.
+- Фотографии в `bytea`, подписи галереи и привязки к парам.
+- Голосования, SHA-256-хеши случайных одноразовых билетов, голоса.
+- Лимиты попыток и журнал административных действий.
 
-```sql
-insert into public.admin_profiles(user_id,role)
-values ('REPLACE-WITH-AUTH-USER-UUID','admin');
-```
+Фотографии до одобрения доступны только администратору. Сервер проверяет размер, декодирует изображение, ограничивает число пикселей и перекодирует его в WebP без EXIF-метаданных. Заявка и фотография записываются одной транзакцией. Удаление заявки удаляет связанные фото, если на пару нет голосов. Удалённые/заменённые фотографии не доступны публично; старые версии заменённых фото остаются в базе для последующей очистки.
 
-4. Sign in at `/admin`. Review event settings; start/deadline inputs use Aqtau UTC+5. The event timestamp is stored as `timestamptz`; clients count down to the same instant regardless of visitor timezone.
-5. Submit a test application at `/register-couple`. Check the uploaded private image, consent and contact details before approving. Approval copies the private image into the public competition bucket. For manually added couples, save, edit, upload a photo, then approve. Numbers are assigned automatically once and display order can be edited.
-6. Generate guest tickets in Voting Management. **Save the CSV immediately**: plaintext codes are returned once, then only SHA-256 hashes remain in PostgreSQL. Keep the downloaded list private. Distribute exactly one ticket per authorized guest. Redeemed and revoked tickets cannot vote.
-7. Open voting. Use two browser windows to try voting concurrently with one test code; exactly one transaction must succeed. Try invalid/revoked codes and closed voting. No public endpoint returns ticket hashes, private contacts, votes, or unpublished totals.
-8. Open `/screen/qr` on the projector. The QR encodes the actual page origin plus `/vote`. A public QR does not replace the guest's personal code. PNG/SVG downloads and print are in QR Generator.
-9. Close voting before publishing results or announcing winners. Open `/screen/winner` before clicking the announcement button. Screens poll every 5 seconds; after receiving the authorized reveal they animate 3–2–1. Tied leaders share the title unless an administrator records an announced tie-break and selects a tied leader before revealing. Reveal is final and prevents reopening voting.
+## Голосование и админка
 
-## Deploy
+1. Проверьте дату, место и программу в «Кеш баптаулары». Начальные значения — 26 ноября 2026, 16:00 по Актау, `Мектептің акт залы`; подтвердите их перед приглашением гостей.
+2. Гости подают заявки через `/register-couple`. Организатор просматривает фото и разрешение, затем одобряет пару. Номер присваивается автоматически. Вручную добавленной паре сначала загрузите фото через «Өзгерту».
+3. В «Дауыс беруді басқару» создайте билеты и **сразу сохраните CSV**. Открытые коды выдаются только при генерации; в базе остаются только хеши. Персональные билеты выдаются по одному каждому допущенному гостю.
+4. Откройте голосование. Общий QR ведёт на текущий домен `/vote`; для отправки голоса нужен индивидуальный код.
+5. Закройте голосование перед публикацией результатов. Экран `/screen/winner` получает разрешение на показ только после кнопки объявления в админке. При равенстве голосов корона общая, либо организатор заранее записывает объявленную процедуру тай-брейка и выбирает одну из лидирующих пар.
+
+Сервер блокирует строку билета в транзакции, проверяет статус голосования и пары, записывает голос и погашает билет. Ограничение `UNIQUE(votes.ticket_id)` дополнительно исключает повторное использование. Публичные API не возвращают контакты участников, сессии, хеши билетов и неопубликованные результаты. Админские API независимо проверяют сессию и роль при каждом обращении; скрытие интерфейса не используется как защита.
+
+Авторизация использует случайную 256-битную сессию с ограничением 12 часов, HttpOnly-cookie и `SameSite=Strict`. Мутации требуют совпадения Origin с `APP_ORIGIN`. Вход и отправка форм ограничиваются на сервере. Журнал не содержит открытых кодов и паролей. Гостевая идентификация выполняется организатором при выдаче билетов.
+
+## Экран 16:9 и вход организатора
+
+Откройте `/screen/qr` на проекторе: слева показаны фото лидера и до трёх лидирующих пар, справа — крупный QR на `/vote`. Рейтинг обновляется раз в 5 секунд. Равное количество голосов отображается как разделённое первое место, окончательный победитель не объявляется автоматически.
+
+В `/admin` → **«Зал экраны»** включайте и скрывайте текущий рейтинг. Этот переключатель отдельно разрешает публичный показ агрегированных голосов через `/api/screen`, даже когда итоговые результаты на `/vote` ещё скрыты. По умолчанию для новой базы рейтинг экрана выключен; в текущем локальном запуске он включён по запросу организатора. Контакты участников и данные билетов этот API не возвращает.
+
+Локальный email организатора — `organizer@example.com`, пароль хранится в `.env.local` в строке `ADMIN_PASSWORD`. Не публикуйте этот файл. Ссылка **«Ұйымдастырушыға кіру»** внизу сайта ведёт в админку.
+
+`npm run local` выбирает адрес компьютера в локальной сети для QR и запускает сайт с доступом из этой сети. Телефон должен быть в той же Wi-Fi-сети; firewall должен разрешать порт 3000. На телефоне доступны фотографии одобренных пар; для голоса нужен личный 20-символьный код билета. Если сеть изменилась, перезапустите `npm run local`, чтобы QR получил новый адрес.
+
+Для опубликованного сайта можно задать `PUBLIC_SITE_URL=https://ваш-домен` — QR использует именно этот адрес. `APP_ORIGIN` задаёт разрешённый Origin для отправки форм. В локальном development-запуске дополнительно разрешён вычисленный LAN Origin; в production это исключение отключено.
+
+## Проверки
 
 ```sh
 npm run typecheck
 npm run build
+npm run test:backend
 ```
 
-The `out` directory contains the static export. Deploy it to any HTTPS static host with clean URL support, or Vercel using the included Next.js configuration. Set both public Supabase environment variables **before building**; static exports bake them into client assets. Rebuild after changing them. The server-side backend is Supabase: privileged RPC functions run in PostgreSQL and enforce authorization independently of the browser. A Node API server and service-role key are not required.
+`test:backend` поднимает временный настоящий PostgreSQL и собранное приложение. Проверяет регистрацию с изображением, приватность, вход и выход, Origin, закрытое голосование, шесть одновременных попыток одним кодом, откат транзакции, отзыв билета, публикацию результатов и победителя. Тестовая база удаляется после завершения. Запускайте от обычного пользователя ОС; PostgreSQL не работает от root.
 
-Sites hosting metadata is in `.openai/hosting.json`. Publish `out` using the Sites workflow. Sites publications start owner-private; guest access requires changing the Site's audience or using another public host. Test the deployed `/vote`, `/admin`, and `/screen/qr` paths before distributing tickets. Use the actual HTTPS deployment for the final QR, never localhost.
+Для браузерных проверок запустите `npm run dev` в отдельном терминале (наличие настроенной базы не влияет на тестовые сценарии), затем:
 
-## Security and operational notes
+```sh
+npx playwright install chromium
+npm test
+```
 
-- PostgreSQL RLS protects private data. Public approved-couple view exposes a fixed safe column list. Authenticated administrator checks run within every privileged function. Default PUBLIC function execution grants are revoked.
-- Voting locks the settings row, ticket row and eligible couple, writes the vote and marks redemption within one transaction. A unique `votes.ticket_id` constraint is the final duplicate barrier. Codes have 80 bits of secure randomness; hashes are not exposed even to the dashboard.
-- Guest identity is checked operationally when staff hand out tickets. Votes store no guest names; administrators can see ticket redemption and aggregate results. They cannot access raw votes through the public API.
-- Applications are limited to one per contact per ten minutes. For a fully public high-traffic event, add an upstream bot challenge and rate limiting. Public registration is not an authentication system.
-- Storage limits MIME types and file sizes; private images need organizer review before being made public. Consider image re-encoding and malware scanning in an Edge Function for untrusted public campaigns. Obtain participant/guardian permission and establish retention rules with the school.
-- Deleted couples/gallery entries leave storage objects for administrator retention review; delete unused objects in Supabase Storage when appropriate. Incomplete uploads expire after fifteen minutes; remove abandoned `uploading` rows and private objects periodically.
-- Enable Supabase backups, review Auth password/MFA policies, keep administrator accounts limited, and archive the audit log after the event.
-- No Supabase credentials were supplied during initial implementation. Migration execution and end-to-end database verification require the project owner’s setup above.
+Браузерные проверки охватывают desktop/mobile, шторы, навигацию, QR и reduced motion. `.playwright-browser` — игнорируемый локальный override пути Chromium; в обычном окружении он не требуется.
 
-## Assets
+## Публикация
 
-Ballroom photograph: Unsplash image `photo-1519167758481-83f550bb49b3`, downloaded into `public/images/ballroom.jpg`. This is atmosphere imagery, not a claim about the actual school venue. Google Fonts serves Cormorant Garamond, Playfair Display and Manrope. A serif system fallback is included.
+Это **серверное Node.js-приложение**, а не статический экспорт. Для размещения используйте Docker/VPS или хостинг Node.js с доступом к PostgreSQL. Команда `npm run build` создаёт `.next/standalone`; Dockerfile включает необходимые статические файлы.
+
+Для публичного мероприятия:
+
+- Настройте HTTPS в reverse proxy (Caddy/Nginx), `APP_ORIGIN=https://ваш-домен` и `COOKIE_SECURE=true`.
+- Ограничьте размер запросов до 6 MB на proxy; включите внешний rate limit для публичных форм, если ожидается массовый трафик.
+- Сохраните резервные копии PostgreSQL: в них находятся и фотографии.
+- Проверьте регистрацию, один тестовый голос и сканирование QR уже на итоговом домене.
+- Настройте сроки хранения контактов, фотографий, истёкших сессий и лимитов попыток с организатором школы. Публикуйте только разрешённые изображения.
+
+### Настройки для Node.js-хостинга
+
+Репозиторий: https://github.com/batyr121/shams. Корень приложения — корень репозитория. Требуются **Node.js 22**, PostgreSQL и обычный серверный процесс; GitHub Pages и статический хостинг для этого приложения не подходят.
+
+| Настройка       | Значение                                                    |
+| --------------- | ----------------------------------------------------------- |
+| Install command | `npm ci`                                                    |
+| Build command   | `npm run build`                                             |
+| Start command   | `npm start`                                                 |
+| Health check    | `/api/health` (HTTP 200 после подключения базы и миграций)  |
+| Port            | Переменная `PORT`, назначенная хостингом; по умолчанию 3000 |
+
+`npm run build` собирает standalone-сервер и копирует необходимые фотографии и статические ресурсы. `npm start` слушает `0.0.0.0` и `PORT`. При обычном Node.js-размещении сохраняйте исходники и `node_modules`, чтобы команды миграций оставались доступны; для минимального контейнера используйте Dockerfile.
+
+Настройте переменные **на хостинге**, не в GitHub:
+
+| Переменная        | Назначение                                                                    |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `DATABASE_URL`    | Рабочее подключение к PostgreSQL, желательно ограниченная роль `ball_app`     |
+| `APP_ORIGIN`      | Полный адрес сайта, например `https://ball.example.com`, без завершающего `/` |
+| `PUBLIC_SITE_URL` | Адрес для QR-кода; обычно равен `APP_ORIGIN`                                  |
+| `COOKIE_SECURE`   | `true` для HTTPS                                                              |
+| `NODE_ENV`        | `production`                                                                  |
+
+Перед первым запуском примените `npm run db:migrate`, используя подключение владельца базы. При наличии прав создавать роли выполните `npm run db:role` с `POSTGRES_APP_PASSWORD`; после этого переключите рабочее `DATABASE_URL` на `ball_app`. Если управляемый хостинг не разрешает создание ролей, назначьте отдельному приложению предоставленную хостингом роль с правами на его базу. Создайте организатора командой `npm run admin:create`, передав `ADMIN_EMAIL` и `ADMIN_PASSWORD` через защищённые переменные окружения. После создания аккаунта пароль организатора не нужен для работы веб-процесса. Не храните подключение владельца и пароль организатора в общедоступных настройках или клиентских переменных `NEXT_PUBLIC_*`.
+
+Миграции не выполняются автоматически при `npm start`: запускайте их в release/pre-deploy-команде перед новой версией. При Docker Compose это делает сервис `migrate`.
+
+**Данные с вашего компьютера не отправляются в GitHub.** Локальная база `.data`, заявки, загруженные участниками фотографии, билеты и аккаунт организатора остаются локально. На новом хостинге будет новая база и новый аккаунт администратора. Если нужно перенести существующие данные, используйте отдельный приватный PostgreSQL dump/restore; не коммитьте дамп в репозиторий. Три исходные фотографии оформления находятся в `public/images` и входят в исходники сайта.
+
+В `ci/checks.yml.example` находится необязательный шаблон GitHub Actions для проверки production-сборки и backend с временным PostgreSQL. Автоматизация пока не включена: для её подключения скопируйте шаблон в `.github/workflows/checks.yml` через GitHub или токен с правом `workflow`. Публикация на хостинг автоматически не запускается.
+
+## Визуальные материалы
+
+Фотографии предоставлены организатором. `shamshi-hero.jpg` — главный экран; `shamshi-evening.jpg` — раздел о бале и галерея; `shamshi-dance-floor.jpg` — фон конкурса и галерея. Оригинальные фотографии скопированы без ретуши. Дополнительные опубликованные снимки из админки добавляются к галерее сайта. Шрифты: Cormorant Garamond, Playfair Display и Manrope.
+
+## Тіл және кеш бағдарламасы
+
+Негізгі көркем тақырыптар ағылшынша, ал батырмалар, нұсқаулар, формалар мен ұсақ мәтіндер қазақша берілген. Іс-шараның ресми атауы — «Шәмші Қайырымдылық Балы 2026».
+
+Бағдарлама (Ақтау уақыты, UTC+5): **16:00–17:00 — Вальс; 17:00–18:30 — Дискотека және ойын-сауық бағдарламасы**. `003_program_schedule` миграциясы басталу уақытын, бағдарлама мен оның аяқталу уақыттарын жаңартады. Әрі қарай уақыттарды админкадағы «Кеш баптаулары» бөлімінен өзгертуге болады.
+
+QR экранын қосу: `/admin` → «Зал экраны» → «ЭКРАНДЫ АШУ · 16:9» → «ТОЛЫҚ ЭКРАН». Көшбасшыларды көрсету «КӨШБАСШЫЛАРДЫ КӨРСЕТУ» батырмасымен басқарылады.

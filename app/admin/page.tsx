@@ -16,9 +16,6 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import {
-  client,
-  db,
-  configured,
   Couple,
   defaults,
   Settings as SettingsType,
@@ -27,6 +24,27 @@ import {
 } from "@/lib/db";
 import { PageTitle } from "@/components/shared";
 import { QRTools } from "@/components/qr";
+import { api, command, uploadPhoto, useBackend } from "@/lib/api";
+const tabLabels: Record<string, string> = {
+  Dashboard: "Басқару тақтасы",
+  "Couple Applications": "Жұптардың өтінімдері",
+  "Approved Couples": "Мақұлданған жұптар",
+  "Voting Management": "Дауыс беруді басқару",
+  "Voting Results": "Дауыс беру нәтижелері",
+  "QR Generator": "QR-код жасау",
+  "Event Settings": "Кеш баптаулары",
+  "Screen Presentation": "Зал экраны",
+  "Photo Gallery": "Фотогалерея",
+};
+const statusLabel = (status: string) =>
+  ({
+    open: "АШЫҚ",
+    closed: "ЖАБЫҚ",
+    paused: "УАҚЫТША ТОҚТАТЫЛҒАН",
+    pending: "Күтуде",
+    approved: "Мақұлданған",
+    rejected: "Қабылданбаған",
+  })[status] || status;
 const tabs = [
   ["Dashboard", LayoutDashboard],
   ["Couple Applications", Users],
@@ -39,6 +57,7 @@ const tabs = [
   ["Photo Gallery", Image],
 ] as const;
 export default function Admin() {
+  const configured = useBackend();
   const [auth, setAuth] = useState(false);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState("Dashboard");
@@ -62,65 +81,36 @@ export default function Admin() {
   const [add, setAdd] = useState(false);
   const [photoPreview, setPhotoPreview] = useState("");
   const refresh = useCallback(async (full = true) => {
-    if (!db) return;
-    const [c, s, r, t, p, g] = await Promise.all([
-      db
-        .from("couple_applications")
-        .select(
-          "id,first_name,second_name,group_name,couple_name,photo_path,status,number,sort_order,contact",
-        )
-        .neq("status", "uploading")
-        .order("sort_order"),
-      db.from("event_settings").select("*").eq("id", 1).single(),
-      db.rpc("admin_results"),
-      db.from("voting_tickets").select("id,used_at,revoked"),
-      db.from("event_program").select("*").order("sort_order"),
-      db.from("gallery_images").select("*").order("sort_order"),
-    ]);
-    if (c.error) throw c.error;
-    setCouples(c.data || []);
-    if (s.data) setSettings(s.data);
-    setResults(r.data || []);
-    setTickets(t.data || []);
-    if (full) setProgram(p.data || []);
-    setGallery(
-      (g.data || []).map((x) => ({
-        ...x,
-        url: process.env.NEXT_PUBLIC_SUPABASE_URL + x.url,
-      })),
-    );
+    const data = await api<{
+      couples: Couple[];
+      settings: SettingsType;
+      results: { couple_id: string; votes: number }[];
+      tickets: { id: string; used_at: string | null; revoked: boolean }[];
+      program: Program[];
+      gallery: { id: string; url: string; caption: string }[];
+    }>("admin/data");
+    setCouples(data.couples);
+    setSettings(data.settings);
+    setResults(data.results);
+    setTickets(data.tickets);
+    if (full) setProgram(data.program);
+    setGallery(data.gallery);
+  }, []);
+  const verify = useCallback(async () => {
+    try {
+      const data = await api<{ user: { id: string; email: string } | null }>(
+        "auth/session",
+      );
+      setAuth(Boolean(data.user));
+    } catch {
+      setAuth(false);
+    } finally {
+      setChecking(false);
+    }
   }, []);
   useEffect(() => {
-    if (!db) {
-      setChecking(false);
-      return;
-    }
-    let alive = true;
-    const verify = async () => {
-      const { data } = await db!.auth.getUser();
-      if (!data.user) {
-        if (alive) {
-          setAuth(false);
-          setChecking(false);
-        }
-        return;
-      }
-      const { data: ok, error } = await db!.rpc("is_admin");
-      if (alive) {
-        setAuth(ok === true && !error);
-        setChecking(false);
-        if (!ok) setError("This account does not have an administrator role.");
-      }
-    };
     verify();
-    const { data } = db.auth.onAuthStateChange(() => {
-      setTimeout(verify, 0);
-    });
-    return () => {
-      alive = false;
-      data.subscription.unsubscribe();
-    };
-  }, []);
+  }, [verify]);
   useEffect(() => {
     if (!auth) return;
     refresh().catch((e) => setError(e.message));
@@ -130,7 +120,10 @@ export default function Admin() {
   useEffect(() => {
     if (window.location.pathname.includes("results")) setTab("Voting Results");
   }, []);
-  async function action(fn: () => Promise<unknown>, msg = "Changes saved.") {
+  async function action(
+    fn: () => Promise<unknown>,
+    msg = "Өзгерістер сақталды.",
+  ) {
     setBusy(true);
     setError("");
     setMessage("");
@@ -139,15 +132,16 @@ export default function Admin() {
       await refresh();
       setMessage(msg);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Operation failed.");
+      setError(e instanceof Error ? e.message : "Әрекет орындалмады.");
     } finally {
       setBusy(false);
     }
   }
-  async function rpc(name: string, args: Record<string, unknown> = {}) {
-    const { data, error } = await client().rpc(name, args);
-    if (error) throw error;
-    return data;
+  async function rpc<T = unknown>(
+    name: string,
+    args: Record<string, unknown> = {},
+  ) {
+    return command<T>(name, args);
   }
   async function login(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -155,13 +149,16 @@ export default function Admin() {
     setBusy(true);
     setError("");
     try {
-      const { error } = await client().auth.signInWithPassword({
-        email: String(f.get("email")),
-        password: String(f.get("password")),
+      await api("auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: String(f.get("email")),
+          password: String(f.get("password")),
+        }),
       });
-      if (error) throw error;
+      await verify();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign in failed");
+      setError(e instanceof Error ? e.message : "Кіру мүмкін болмады.");
     } finally {
       setBusy(false);
     }
@@ -196,27 +193,29 @@ export default function Admin() {
   if (checking)
     return (
       <main className="screen">
-        <p>Verifying administrator access…</p>
+        <p> Ұйымдастырушының рұқсаты тексерілуде… </p>
       </main>
     );
   if (!auth)
     return (
       <main className="page-shell">
         <PageTitle
-          eyebrow="FOR THE PEOPLE BEHIND THE MAGIC"
-          title="Organizer access"
-          sub="Secure administration for The Grand Ball."
+          eyebrow="ҰЙЫМДАСТЫРУШЫЛАРҒА АРНАЛҒАН"
+          title="Organizer Access"
+          sub="Кешті, қатысушыларды және дауыс беруді басқару."
         />
         <div className="form-panel">
           {!configured && (
             <div className="notice">
-              Connect Supabase using the deployment instructions to enable
-              secure organizer access.
+              {" "}
+              Ұйымдастырушы бөліміне кіру үшін сервердің дерекқорға қосылуын
+              тексеріңіз.{" "}
             </div>
           )}
           <form onSubmit={login}>
             <label className="form-field">
-              Email
+              {" "}
+              Email мекенжайы{" "}
               <input
                 name="email"
                 type="email"
@@ -225,7 +224,8 @@ export default function Admin() {
               />
             </label>
             <label className="form-field" style={{ marginTop: 20 }}>
-              Password
+              {" "}
+              Құпиясөз{" "}
               <input
                 name="password"
                 type="password"
@@ -240,11 +240,17 @@ export default function Admin() {
               </div>
             )}
             <button className="button filled" disabled={!configured || busy}>
-              {busy ? "SIGNING IN…" : "SIGN IN SECURELY"}
+              {busy ? "КІРУДЕ…" : "КІРУ"}
             </button>
           </form>
+          <p className="admin-login-help">
+            Ұйымдастырушының email мекенжайы мен құпиясөзін енгізіңіз.
+            Жергілікті іске қосу деректері құпия файлда сақталған:{" "}
+            <code>.env.local</code> жоба қалтасында.
+          </p>
           <Link className="text-link" href="/">
-            RETURN TO THE BALL
+            {" "}
+            САЙТҚА ОРАЛУ{" "}
           </Link>
         </div>
       </main>
@@ -255,7 +261,7 @@ export default function Admin() {
         <Link className="brand" href="/">
           <Crown />
           <span>
-            THE GRAND BALL<small>ORGANIZER CONSOLE</small>
+            Шәмші Қайырымдылық Балы 2026<small> ҰЙЫМДАСТЫРУШЫ БӨЛІМІ </small>
           </span>
         </Link>
         <nav>
@@ -270,24 +276,48 @@ export default function Admin() {
               }}
             >
               <Icon />
-              {name}
+              {tabLabels[name] || name}
             </button>
           ))}
-          <button onClick={() => db!.auth.signOut()}>
-            <LogOut />
-            Sign out
+          <button
+            onClick={async () => {
+              try {
+                await api("auth/logout", { method: "POST" });
+                setAuth(false);
+              } catch (e) {
+                setError(
+                  e instanceof Error ? e.message : "Шығу мүмкін болмады.",
+                );
+              }
+            }}
+          >
+            <LogOut /> Шығу{" "}
           </button>
         </nav>
       </aside>
       <main className="admin-main">
         <div className="admin-heading">
           <div>
-            <p className="eyebrow">THE GRAND BALL · ORGANIZER CONSOLE</p>
+            <p className="eyebrow">
+              Шәмші Қайырымдылық Балы 2026 · ҰЙЫМДАСТЫРУШЫ БӨЛІМІ
+            </p>
             <h1>{tab}</h1>
-            <p>26 November 2026 · Asia/Aqtau</p>
+            <p>
+              {" "}
+              {new Date(settings.starts_at).toLocaleString("kk-KZ", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: "Asia/Aqtau",
+              })}{" "}
+              · Ақтау уақыты{" "}
+            </p>
           </div>
           <span className="button small">
-            VOTING {settings.voting_status.toUpperCase()}
+            {" "}
+            ДАУЫС БЕРУ {statusLabel(settings.voting_status)}
           </span>
         </div>
         {error && (
@@ -308,10 +338,10 @@ export default function Admin() {
             <>
               <div className="stats">
                 {[
-                  [couples.length, "TOTAL COUPLES"],
-                  [pending.length, "PENDING APPLICATIONS"],
-                  [approved.length, "APPROVED COUPLES"],
-                  [total, "VALIDATED VOTES"],
+                  [couples.length, "БАРЛЫҚ ЖҰПТАР"],
+                  [pending.length, "КҮТУДЕГІ ӨТІНІМДЕР"],
+                  [approved.length, "МАҚҰЛДАНҒАН ЖҰПТАР"],
+                  [total, "РАСТАЛҒАН ДАУЫСТАР"],
                 ].map(([n, label]) => (
                   <div className="stat" key={label}>
                     <strong>{n}</strong>
@@ -322,30 +352,36 @@ export default function Admin() {
               <div className="admin-panel">
                 <h2>An extraordinary evening, under control.</h2>
                 <p>
-                  Review applications, distribute guest tickets, and open voting
-                  when the ballroom is ready.
+                  {" "}
+                  Өтінімдерді тексеріп, қонақтарға жеке код таратыңыз және кеш
+                  басталғанда дауыс беруді ашыңыз.{" "}
                 </p>
                 <div className="actions">
                   <button
                     className="button"
                     onClick={() => setTab("Couple Applications")}
                   >
-                    REVIEW {pending.length} APPLICATIONS
+                    {" "}
+                    ТЕКСЕРУ: {pending.length} ӨТІНІМ{" "}
                   </button>
                   <button
                     className="button"
                     onClick={() => setTab("Voting Management")}
                   >
-                    MANAGE VOTING
+                    {" "}
+                    ДАУЫС БЕРУДІ БАСҚАРУ{" "}
                   </button>
                   <Link className="button" href="/screen/qr" target="_blank">
-                    OPEN QR SCREEN
+                    {" "}
+                    ЭКРАН 16:9{" "}
                   </Link>
                 </div>
                 <p>
-                  Guest tickets: {tickets.length} issued ·{" "}
-                  {tickets.filter((t) => t.used_at).length} redeemed ·{" "}
-                  {tickets.filter((t) => t.revoked).length} revoked.
+                  {" "}
+                  Қонақ билеттері: {tickets.length} берілді ·{" "}
+                  {tickets.filter((t) => t.used_at).length} қолданылды ·{" "}
+                  {tickets.filter((t) => t.revoked).length} қайтарып
+                  алынды.{" "}
                 </p>
               </div>
             </>
@@ -360,18 +396,19 @@ export default function Admin() {
                     setEditing(null);
                   }}
                 >
-                  ADD COUPLE MANUALLY
+                  {" "}
+                  ЖҰПТЫ ҚОЛМЕН ҚОСУ{" "}
                 </button>
               </div>
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>COUPLE</th>
-                      <th>CLASS</th>
-                      <th>STATUS</th>
-                      <th>CONTACT</th>
-                      <th>ACTIONS</th>
+                      <th> ЖҰП </th>
+                      <th> СЫНЫП </th>
+                      <th> МӘРТЕБЕ </th>
+                      <th> БАЙЛАНЫС </th>
+                      <th> ӘРЕКЕТТЕР </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -382,59 +419,36 @@ export default function Admin() {
                             #{c.number || "—"} {c.first_name} & {c.second_name}
                           </td>
                           <td>{c.group_name}</td>
-                          <td>{c.status}</td>
+                          <td>{statusLabel(c.status)}</td>
                           <td>{c.contact}</td>
                           <td>
                             {c.status !== "approved" && (
                               <button
                                 onClick={() =>
                                   action(async () => {
-                                    if (c.photo_path) {
-                                      const sup = client();
-                                      const { data, error } = await sup.storage
-                                        .from("application-photos")
-                                        .download(c.photo_path);
-                                      if (error) throw error;
-                                      const path =
-                                        c.id +
-                                        "/" +
-                                        crypto.randomUUID() +
-                                        "." +
-                                        c.photo_path.split(".").pop();
-                                      const upload = await sup.storage
-                                        .from("couple-photos")
-                                        .upload(path, data, {
-                                          contentType: data.type,
-                                        });
-                                      if (upload.error) throw upload.error;
-                                      await rpc("update_couple_photo", {
-                                        p_id: c.id,
-                                        p_path: path,
-                                      });
-                                    }
                                     await rpc("moderate_couple", {
                                       p_id: c.id,
                                       p_status: "approved",
                                     });
-                                  }, "Couple approved and published.")
+                                  }, "Жұп мақұлданып, жарияланды.")
                                 }
                               >
-                                Approve
+                                {" "}
+                                Мақұлдау{" "}
                               </button>
                             )}
                             {c.photo_path && (
                               <button
                                 onClick={() =>
                                   action(async () => {
-                                    const { data, error } = await client()
-                                      .storage.from("application-photos")
-                                      .createSignedUrl(c.photo_path, 60);
-                                    if (error) throw error;
-                                    setPhotoPreview(data.signedUrl);
-                                  }, "Private photo preview is valid for 60 seconds.")
+                                    setPhotoPreview(
+                                      "/api/media/" + c.photo_path,
+                                    );
+                                  }, "Жеке фотосурет тек жүйеге кірген ұйымдастырушыға көрінеді.")
                                 }
                               >
-                                Review photo
+                                {" "}
+                                Фотосуретті қарау{" "}
                               </button>
                             )}
                             <button
@@ -443,7 +457,8 @@ export default function Admin() {
                                 setAdd(true);
                               }}
                             >
-                              Edit
+                              {" "}
+                              Өзгерту{" "}
                             </button>
                             <button
                               onClick={() =>
@@ -455,13 +470,14 @@ export default function Admin() {
                                 )
                               }
                             >
-                              Reject
+                              {" "}
+                              Қабылдамау{" "}
                             </button>
                             <button
                               onClick={() => {
                                 if (
                                   window.confirm(
-                                    "Delete this application? Couples with votes cannot be deleted.",
+                                    "Осы өтінімді жою керек пе? Дауыс жиналған жұптарды жою мүмкін емес.",
                                   )
                                 )
                                   action(() =>
@@ -469,7 +485,8 @@ export default function Admin() {
                                   );
                               }}
                             >
-                              Delete
+                              {" "}
+                              Жою{" "}
                             </button>
                           </td>
                         </tr>
@@ -478,7 +495,7 @@ export default function Admin() {
                   </tbody>
                 </table>
               </div>
-              {!couples.length && <p>No applications yet.</p>}
+              {!couples.length && <p> Әзірге өтінім жоқ. </p>}
             </div>
           )}
           {tab === "Voting Management" && (
@@ -486,8 +503,9 @@ export default function Admin() {
               <div className="admin-panel">
                 <h2>The voting floor</h2>
                 <p>
-                  Open, pause, resume, or close voting. Closing is required
-                  before announcing winners.
+                  {" "}
+                  Дауыс беруді ашыңыз, үзіліс жасаңыз немесе жабыңыз.
+                  Жеңімпаздарды жариялар алдында дауыс беруді жабу қажет.{" "}
                 </p>
                 <div className="actions">
                   <button
@@ -495,22 +513,25 @@ export default function Admin() {
                     onClick={() => status("open")}
                   >
                     {settings.voting_status === "paused"
-                      ? "RESUME VOTING"
-                      : "OPEN VOTING"}
+                      ? "ДАУЫС БЕРУДІ ЖАЛҒАСТЫРУ"
+                      : "ДАУЫС БЕРУДІ АШУ"}
                   </button>
                   <button className="button" onClick={() => status("paused")}>
-                    PAUSE VOTING
+                    {" "}
+                    УАҚЫТША ТОҚТАТУ{" "}
                   </button>
                   <button className="button" onClick={() => status("closed")}>
-                    CLOSE VOTING
+                    {" "}
+                    ДАУЫС БЕРУДІ ЖАБУ{" "}
                   </button>
                 </div>
               </div>
               <div className="admin-panel">
                 <h2>One guest. One ticket. One vote.</h2>
                 <p>
-                  Codes are securely generated on the server. Plaintext codes
-                  are shown only once; download them immediately.
+                  {" "}
+                  Кодтар серверде қауіпсіз жасалады және бір рет қана
+                  көрсетіледі. Оларды бірден жүктеп алыңыз.{" "}
                 </p>
                 <form
                   onSubmit={(e) => {
@@ -518,11 +539,11 @@ export default function Admin() {
                     const f = new FormData(e.currentTarget);
                     action(async () => {
                       setCodes(
-                        await rpc("generate_tickets", {
+                        await rpc<string[]>("generate_tickets", {
                           p_count: Number(f.get("count")),
                         }),
                       );
-                    }, "Tickets generated. Save your codes now.");
+                    }, "Билеттер жасалды. Кодтарды қазір сақтап алыңыз.");
                   }}
                 >
                   <div className="actions">
@@ -535,12 +556,12 @@ export default function Admin() {
                       style={{ maxWidth: 120 }}
                       required
                     />
-                    <button className="button filled">GENERATE TICKETS</button>
+                    <button className="button filled"> БИЛЕТТЕР ЖАСАУ </button>
                   </div>
                 </form>
                 <p>
-                  {tickets.filter((t) => t.used_at).length} used of{" "}
-                  {tickets.length} tickets.
+                  {tickets.filter((t) => t.used_at).length} қолданылды, барлығы{" "}
+                  {tickets.length} билет.{" "}
                 </p>
                 {codes.length > 0 && (
                   <>
@@ -559,24 +580,30 @@ export default function Admin() {
                           URL.revokeObjectURL(a.href);
                         }}
                       >
-                        DOWNLOAD CODES CSV
+                        {" "}
+                        КОДТАРДЫ CSV ТҮРІНДЕ ЖҮКТЕУ{" "}
                       </button>
                       <button className="button" onClick={() => window.print()}>
-                        PRINT VOTING TICKETS
+                        {" "}
+                        БИЛЕТТЕРДІ БАСЫП ШЫҒАРУ{" "}
                       </button>
                     </div>
                     <div className="ticket-sheet">
                       {codes.map((c) => (
                         <div className="ticket" key={c}>
                           <Crown style={{ margin: "auto" }} size={20} />
-                          <small>THE GRAND BALL · ONE GUEST VOTE</small>
+                          <small>
+                            Шәмші Қайырымдылық Балы 2026 · БІР ҚОНАҚ — БІР ДАУЫС
+                          </small>
                           <strong>{c}</strong>
                           <small>
-                            Scan the event QR or visit{" "}
+                            {" "}
+                            Кештің QR-кодын сканерлеңіз немесе мына сілтемеге
+                            кіріңіз:{" "}
                             {typeof window !== "undefined"
                               ? window.location.origin + "/vote"
-                              : ""}
-                            . Keep this code private.
+                              : ""}{" "}
+                            . Бұл кодты ешкімге бермеңіз.{" "}
                           </small>
                         </div>
                       ))}
@@ -587,9 +614,9 @@ export default function Admin() {
                   <table>
                     <thead>
                       <tr>
-                        <th>TICKET ID</th>
-                        <th>STATE</th>
-                        <th>ACTION</th>
+                        <th> БИЛЕТ ID </th>
+                        <th> МӘРТЕБЕ </th>
+                        <th> ӘРЕКЕТ </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -598,10 +625,10 @@ export default function Admin() {
                           <td>{t.id.slice(0, 8)}</td>
                           <td>
                             {t.used_at
-                              ? "Redeemed"
+                              ? "Қолданылған"
                               : t.revoked
-                                ? "Revoked"
-                                : "Unused"}
+                                ? "Қайтарылған"
+                                : "Қолданылмаған"}
                           </td>
                           <td>
                             {!t.used_at && !t.revoked && (
@@ -612,7 +639,8 @@ export default function Admin() {
                                   )
                                 }
                               >
-                                Revoke
+                                {" "}
+                                Қайтарып алу{" "}
                               </button>
                             )}
                           </td>
@@ -628,8 +656,8 @@ export default function Admin() {
             <div className="admin-panel">
               <h2>The evening’s royal ranking</h2>
               <p>
-                {total} validated votes · {approved.length} couples · updates
-                every 5 seconds
+                {total} расталған дауыс · {approved.length} жұп · әр 5 секунд
+                сайын жаңартылады{" "}
               </p>
               {[...results]
                 .sort((a, b) => b.votes - a.votes)
@@ -642,7 +670,7 @@ export default function Admin() {
                           {i + 1}. {c?.first_name} & {c?.second_name}
                         </span>
                         <span>
-                          {r.votes} votes ·{" "}
+                          {r.votes} дауыс ·{" "}
                           {total ? Math.round((r.votes / total) * 100) : 0}%
                         </span>
                       </div>
@@ -656,7 +684,7 @@ export default function Admin() {
                     </div>
                   );
                 })}
-              {total === 0 && <p>No votes have been cast.</p>}
+              {total === 0 && <p> Әзірге дауыс берілген жоқ. </p>}
               <div className="actions">
                 <button
                   className="button"
@@ -671,8 +699,8 @@ export default function Admin() {
                   }
                 >
                   {settings.results_published
-                    ? "HIDE PUBLIC RESULTS"
-                    : "PUBLISH RESULTS"}
+                    ? "НӘТИЖЕЛЕРДІ ЖАСЫРУ"
+                    : "НӘТИЖЕЛЕРДІ ЖАРИЯЛАУ"}
                 </button>
                 <button
                   className="button filled"
@@ -680,21 +708,23 @@ export default function Admin() {
                   onClick={() => {
                     if (
                       window.confirm(
-                        "Publish the validated results and start the winner presentation?",
+                        "Расталған нәтижелерді жариялап, жеңімпазды көрсету керек пе?",
                       )
                     )
                       action(
                         () => rpc("announce_winners"),
-                        "Winner presentation started.",
+                        "Жеңімпазды көрсету басталды.",
                       );
                   }}
                 >
-                  ОБЪЯВИТЬ ПОБЕДИТЕЛЕЙ
+                  ЖЕҢІМПАЗДАРДЫ ЖАРИЯЛАУ
                 </button>
               </div>
               <p>
-                Ties share the crown by default. To select a tie-break winner,
-                record a procedure below and choose one of the tied couples.
+                {" "}
+                Дауыстар тең болса, атақ ортақ беріледі. Қосымша шешім қажет
+                болса, оның жарияланған тәртібін жазып, дауысы тең жұптардың
+                бірін таңдаңыз.{" "}
               </p>
               <form
                 onSubmit={(e) => {
@@ -710,9 +740,10 @@ export default function Admin() {
               >
                 <div className="form-grid">
                   <label className="form-field">
-                    Tie-break winner
+                    {" "}
+                    Қосымша шешім бойынша жеңімпаз{" "}
                     <select name="couple" required>
-                      <option value="">Select tied couple</option>
+                      <option value="">Дауысы тең жұпты таңдаңыз</option>
                       {results
                         .filter(
                           (r) =>
@@ -731,25 +762,27 @@ export default function Admin() {
                     </select>
                   </label>
                   <label className="form-field">
-                    Announced tie-break procedure
+                    {" "}
+                    Жарияланған қосымша шешім тәртібі{" "}
                     <input
                       name="reason"
                       minLength={15}
                       required
-                      placeholder="e.g. Jury dance-off, announced to guests"
+                      placeholder="Мысалы: қонақтарға жарияланған қазылар шешімі"
                     />
                   </label>
                 </div>
-                <button className="button">RECORD TIE-BREAK</button>
+                <button className="button"> ҚОСЫМША ШЕШІМДІ САҚТАУ </button>
               </form>
             </div>
           )}
           {tab === "QR Generator" && (
             <div className="admin-panel">
-              <h2>СГЕНЕРИРОВАТЬ QR-КОД</h2>
+              <h2>QR Code Generator</h2>
               <p>
-                This code opens this deployment’s voting page. Guests still need
-                their individual tickets to submit a vote.
+                {" "}
+                Бұл QR-код дауыс беру бетін ашады. Дауыс беру үшін әр қонаққа
+                жеке билет коды қажет.{" "}
               </p>
               <QRTools />
             </div>
@@ -779,7 +812,8 @@ export default function Admin() {
                 >
                   <div className="form-grid">
                     <label className="form-field">
-                      Start · Aqtau (UTC+5)
+                      {" "}
+                      Басталу уақыты · Ақтау (UTC+5){" "}
                       <input
                         name="starts"
                         type="datetime-local"
@@ -792,7 +826,8 @@ export default function Admin() {
                       />
                     </label>
                     <label className="form-field">
-                      Registration deadline · Aqtau
+                      {" "}
+                      Тіркелудің соңғы уақыты · Ақтау{" "}
                       <input
                         name="deadline"
                         type="datetime-local"
@@ -806,7 +841,8 @@ export default function Admin() {
                       />
                     </label>
                     <label className="form-field">
-                      Location
+                      {" "}
+                      Өтетін орын{" "}
                       <input
                         name="location"
                         defaultValue={settings.location}
@@ -815,7 +851,8 @@ export default function Admin() {
                       />
                     </label>
                     <label className="form-field">
-                      Dress code
+                      {" "}
+                      Киім үлгісі{" "}
                       <input
                         name="dress"
                         defaultValue={settings.dress_code}
@@ -824,7 +861,8 @@ export default function Admin() {
                       />
                     </label>
                     <label className="form-field full">
-                      Description
+                      {" "}
+                      Сипаттама{" "}
                       <textarea
                         name="description"
                         defaultValue={settings.description}
@@ -838,10 +876,13 @@ export default function Admin() {
                       name="open"
                       type="checkbox"
                       defaultChecked={settings.registration_open}
-                    />
-                    Registration is open
+                    />{" "}
+                    Тіркелу ашық{" "}
                   </label>
-                  <button className="button filled">SAVE EVENT SETTINGS</button>
+                  <button className="button filled">
+                    {" "}
+                    БАПТАУЛАРДЫ САҚТАУ{" "}
+                  </button>
                 </form>
               </div>
               <div className="admin-panel">
@@ -854,6 +895,7 @@ export default function Admin() {
                       rpc("save_program", {
                         p_items: program.map((p, i) => ({
                           time: f.get("time" + i),
+                          end_time: f.get("end" + i) || null,
                           title: f.get("title" + i),
                           description: f.get("desc" + i),
                           sort_order: i,
@@ -872,7 +914,8 @@ export default function Admin() {
                       }}
                     >
                       <label className="form-field">
-                        Time
+                        {" "}
+                        Басталу уақыты{" "}
                         <input
                           name={"time" + i}
                           type="time"
@@ -881,7 +924,16 @@ export default function Admin() {
                         />
                       </label>
                       <label className="form-field">
-                        Activity
+                        Аяқталу уақыты
+                        <input
+                          name={"end" + i}
+                          type="time"
+                          defaultValue={p.end_time || ""}
+                        />
+                      </label>
+                      <label className="form-field">
+                        {" "}
+                        Іс-шара{" "}
                         <input
                           name={"title" + i}
                           defaultValue={p.title}
@@ -890,7 +942,8 @@ export default function Admin() {
                         />
                       </label>
                       <label className="form-field full">
-                        Description
+                        {" "}
+                        Сипаттама{" "}
                         <input
                           name={"desc" + i}
                           defaultValue={p.description}
@@ -904,7 +957,8 @@ export default function Admin() {
                           setProgram(program.filter((_, j) => i !== j))
                         }
                       >
-                        REMOVE ACTIVITY
+                        {" "}
+                        ІС-ШАРАНЫ ЖОЮ{" "}
                       </button>
                     </div>
                   ))}
@@ -917,23 +971,28 @@ export default function Admin() {
                           ...program,
                           {
                             time: "21:30",
-                            title: "New activity",
+                            title: "Жаңа іс-шара",
                             description: "",
                             sort_order: program.length,
                           },
                         ])
                       }
                     >
-                      ADD ACTIVITY
+                      {" "}
+                      ІС-ШАРА ҚОСУ{" "}
                     </button>
                     <button
                       type="button"
                       className="button"
                       onClick={() => setProgram(defaultProgram)}
                     >
-                      LOAD SUGGESTED PROGRAM
+                      {" "}
+                      НЕГІЗГІ БАҒДАРЛАМАНЫ ҚОЮ{" "}
                     </button>
-                    <button className="button filled">SAVE PROGRAM</button>
+                    <button className="button filled">
+                      {" "}
+                      БАҒДАРЛАМАНЫ САҚТАУ{" "}
+                    </button>
                   </div>
                 </form>
               </div>
@@ -941,32 +1000,65 @@ export default function Admin() {
           )}
           {tab === "Screen Presentation" && (
             <div className="admin-panel">
-              <h2>Made for the big screen</h2>
+              <h2>The Ballroom Screen · 16:9</h2>
               <p>
-                Open a presentation in a separate browser tab, then use its
-                fullscreen control. Winner reveal is triggered only from Voting
-                Results.
+                {" "}
+                Сол жақта көшбасшының фотосуреті мен жұптардың рейтингі
+                көрсетіледі. Оң жақтағы QR-код арқылы қонақтар жұптардың
+                фотосуреттерін көріп, дауыс бере алады.{" "}
               </p>
+              <div className="notice">
+                {settings.screen_results_visible
+                  ? "Қазіргі көшбасшылар зал экранында көрсетіліп тұр."
+                  : "Көшбасшылар жасырылған. QR-код қолжетімді болып қалады."}{" "}
+                Дауыс беру бетіндегі қорытынды нәтижелер бөлек жарияланады.{" "}
+              </div>
               <div className="actions">
-                <Link
+                <button
                   className="button filled"
-                  href="/screen/qr"
-                  target="_blank"
+                  onClick={() =>
+                    action(
+                      () =>
+                        rpc("set_event_state", {
+                          p_patch: {
+                            screen_results_visible:
+                              !settings.screen_results_visible,
+                          },
+                        }),
+                      settings.screen_results_visible
+                        ? "Экрандағы рейтинг жасырылды."
+                        : "Экрандағы рейтинг қосылды.",
+                    )
+                  }
                 >
-                  QR PRESENTATION
+                  {settings.screen_results_visible
+                    ? "КӨШБАСШЫЛАРДЫ ЖАСЫРУ"
+                    : "КӨШБАСШЫЛАРДЫ КӨРСЕТУ"}
+                </button>
+                <Link className="button" href="/screen/qr" target="_blank">
+                  {" "}
+                  ЭКРАНДЫ АШУ · 16:9{" "}
                 </Link>
                 <Link className="button" href="/screen/winner" target="_blank">
-                  WINNER PRESENTATION
+                  {" "}
+                  ЖЕҢІМПАЗДЫ ЖАРИЯЛАУ{" "}
                 </Link>
               </div>
+              <p>
+                {" "}
+                Рейтинг әр 5 секунд сайын жаңартылады. Бұл — аралық нәтижелер.
+                Жеңімпазды жариялау «Дауыс беру нәтижелері» бөлімінен іске
+                қосылады.{" "}
+              </p>
             </div>
           )}
           {tab === "Photo Gallery" && (
             <div className="admin-panel">
               <h2>Moments to remember</h2>
               <p>
-                Upload only photographs with permission from all identifiable
-                participants.
+                {" "}
+                Фотосуреттегі қатысушылардың рұқсаты алынған суреттерді ғана
+                жүктеңіз.{" "}
               </p>
               <form
                 onSubmit={(e) => {
@@ -980,13 +1072,10 @@ export default function Admin() {
                       ) ||
                       file.size > 5 * 1024 * 1024
                     )
-                      throw Error("Use JPG, PNG or WebP under 5 MB.");
-                    const path =
-                      crypto.randomUUID() + "." + file.type.split("/")[1];
-                    const { error } = await client()
-                      .storage.from("gallery")
-                      .upload(path, file);
-                    if (error) throw error;
+                      throw Error(
+                        "Көлемі 5 МБ-тан аспайтын JPG, PNG немесе WebP таңдаңыз.",
+                      );
+                    const { path } = await uploadPhoto("gallery", file);
                     await rpc("add_gallery", {
                       p_path: path,
                       p_caption: f.get("caption"),
@@ -996,7 +1085,8 @@ export default function Admin() {
               >
                 <div className="form-grid">
                   <label className="form-field">
-                    Image
+                    {" "}
+                    Фотосурет{" "}
                     <input
                       name="photo"
                       type="file"
@@ -1005,16 +1095,17 @@ export default function Admin() {
                     />
                   </label>
                   <label className="form-field">
-                    Caption
-                    <input name="caption" maxLength={200} required />
+                    {" "}
+                    Жазба <input name="caption" maxLength={200} required />
                   </label>
                 </div>
                 <label className="check">
-                  <input type="checkbox" required />I have permission to publish
-                  this image.
+                  <input type="checkbox" required /> Бұл фотосуретті жариялауға
+                  рұқсатым бар.{" "}
                 </label>
                 <button className="button filled">
-                  UPLOAD & PUBLISH PHOTO
+                  {" "}
+                  ФОТОСУРЕТТІ ЖҮКТЕУ ЖӘНЕ ЖАРИЯЛАУ{" "}
                 </button>
               </form>
               <div className="gallery-grid" style={{ marginTop: 30 }}>
@@ -1028,7 +1119,8 @@ export default function Admin() {
                         action(() => rpc("delete_gallery", { p_id: g.id }))
                       }
                     >
-                      REMOVE
+                      {" "}
+                      ЖОЮ{" "}
                     </button>
                   </div>
                 ))}
@@ -1042,16 +1134,17 @@ export default function Admin() {
           className="modal"
           role="dialog"
           aria-modal="true"
-          aria-label="Private application photograph"
+          aria-label="Өтінімнің жеке фотосуреті"
           onClick={() => setPhotoPreview("")}
         >
           <button className="button close" onClick={() => setPhotoPreview("")}>
-            CLOSE PREVIEW
+            {" "}
+            АЛДЫН АЛА ҚАРАУДЫ ЖАБУ{" "}
           </button>
           <img
             className="lightbox"
             src={photoPreview}
-            alt="Private couple application photograph"
+            alt="Жұптың өтініміндегі жеке фотосурет"
           />
         </div>
       )}
@@ -1071,16 +1164,16 @@ export default function Admin() {
               overflow: "auto",
             }}
           >
-            <h2>{editing ? "Edit couple" : "Add couple"}</h2>
+            <h2>{editing ? "Edit couple" : "Add a Couple"}</h2>
             <form onSubmit={saveCouple}>
               <div className="form-grid" style={{ marginTop: 25 }}>
                 {[
-                  ["first", "First name", editing?.first_name],
-                  ["second", "Second name", editing?.second_name],
-                  ["group", "Class / group", editing?.group_name],
-                  ["name", "Couple name", editing?.couple_name],
-                  ["contact", "Private contact", editing?.contact],
-                  ["order", "Display order", editing?.sort_order ?? 0],
+                  ["first", "Бірінші қатысушы", editing?.first_name],
+                  ["second", "Екінші қатысушы", editing?.second_name],
+                  ["group", "Сынып немесе топ", editing?.group_name],
+                  ["name", "Жұптың атауы", editing?.couple_name],
+                  ["contact", "Байланыс деректері", editing?.contact],
+                  ["order", "Көрсету реті", editing?.sort_order ?? 0],
                 ].map(([name, label, value]) => (
                   <label className="form-field" key={String(name)}>
                     {label}
@@ -1100,15 +1193,17 @@ export default function Admin() {
                 ))}
               </div>
               <p style={{ fontSize: 12, margin: "20px 0" }}>
-                Manually added couples must have participant permission. Add
-                their image after saving.
+                {" "}
+                Жұпты қосу үшін екі қатысушының рұқсаты қажет. Сақтағаннан кейін
+                фотосуретін жүктеңіз.{" "}
               </p>
               <label className="check">
-                <input type="checkbox" required />
-                Participant permission has been obtained.
+                <input type="checkbox" required /> Қатысушылардың рұқсаты
+                алынды.{" "}
               </label>
               <button className="button filled" disabled={busy}>
-                SAVE COUPLE
+                {" "}
+                ЖҰПТЫ САҚТАУ{" "}
               </button>
               <button
                 className="button"
@@ -1118,7 +1213,8 @@ export default function Admin() {
                   setEditing(null);
                 }}
               >
-                CANCEL
+                {" "}
+                БАС ТАРТУ{" "}
               </button>
             </form>
             {editing && (
@@ -1134,21 +1230,10 @@ export default function Admin() {
                       ) ||
                       file.size > 5 * 1024 * 1024
                     )
-                      throw Error("Use a JPG, PNG or WebP under 5 MB.");
-                    const path =
-                      editing.id +
-                      "/" +
-                      crypto.randomUUID() +
-                      "." +
-                      file.type.split("/")[1];
-                    const { error } = await client()
-                      .storage.from("couple-photos")
-                      .upload(path, file);
-                    if (error) throw error;
-                    await rpc("update_couple_photo", {
-                      p_id: editing.id,
-                      p_path: path,
-                    });
+                      throw Error(
+                        "Көлемі 5 МБ-тан аспайтын JPG, PNG немесе WebP таңдаңыз.",
+                      );
+                    await uploadPhoto("couple", file, editing.id);
                     setAdd(false);
                     setEditing(null);
                   });
@@ -1156,7 +1241,8 @@ export default function Admin() {
                 style={{ marginTop: 20 }}
               >
                 <label className="form-field">
-                  Replace approved public photo
+                  {" "}
+                  Жұптың жарияланатын фотосуреті{" "}
                   <input
                     name="image"
                     type="file"
@@ -1165,7 +1251,8 @@ export default function Admin() {
                   />
                 </label>
                 <button className="button" disabled={busy}>
-                  UPLOAD PHOTO
+                  {" "}
+                  ФОТОСУРЕТТІ ЖҮКТЕУ{" "}
                 </button>
               </form>
             )}

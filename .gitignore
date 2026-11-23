@@ -9,3 +9,10 @@ test-results
 playwright-report
 
 .playwright-browser
+
+.data/
+
+# Local hosting metadata and operating-system files
+.openai/
+.DS_Store
+*.log

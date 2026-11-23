@@ -1,27 +1,44 @@
 "use client";
 import { useState, useEffect } from "react";
 import QRCode from "qrcode";
+import { api } from "@/lib/api";
 export function QRTools({ screen = false }: { screen?: boolean }) {
   const [png, setPng] = useState("");
   const [svg, setSvg] = useState("");
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
-    const u = window.location.origin + "/vote";
-    setUrl(u);
-    Promise.all([
-      QRCode.toDataURL(u, {
-        width: 1200,
-        margin: 3,
-        errorCorrectionLevel: "M",
-      }),
-      QRCode.toString(u, { type: "svg", margin: 3, errorCorrectionLevel: "M" }),
-    ])
-      .then(([p, s]) => {
+    let active = true;
+    async function generate() {
+      let u = window.location.origin + "/vote";
+      try {
+        const event = await api<{ voting_url: string }>("event");
+        if (event.voting_url) u = event.voting_url;
+      } catch {}
+      const [p, s] = await Promise.all([
+        QRCode.toDataURL(u, {
+          width: 1200,
+          margin: 4,
+          errorCorrectionLevel: "M",
+        }),
+        QRCode.toString(u, {
+          type: "svg",
+          margin: 4,
+          errorCorrectionLevel: "M",
+        }),
+      ]);
+      if (active) {
+        setUrl(u);
         setPng(p);
         setSvg(s);
-      })
-      .catch(() => setError("QR generation failed. Please reload."));
+      }
+    }
+    generate().catch(() => {
+      if (active) setError("QR-код жасалмады. Бетті жаңартыңыз.");
+    });
+    return () => {
+      active = false;
+    };
   }, []);
   function downloadSvg() {
     const u = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
@@ -38,18 +55,21 @@ export function QRTools({ screen = false }: { screen?: boolean }) {
         <img
           className={screen ? "qr-image" : "qr-preview"}
           src={png}
-          alt="Scan to open the Grand Ball voting page"
+          alt="Дауыс беруге арналған QR-код — Шәмші Қайырымдылық Балы 2026"
         />
+      )}
+      {screen && url && (
+        <span className="qr-destination">{new URL(url).host}/vote</span>
       )}
       {!screen && (
         <>
           <p style={{ textAlign: "center", wordBreak: "break-all" }}>{url}</p>
           <div className="actions">
             <a className="button" href={png} download="grand-ball-vote.png">
-              DOWNLOAD PNG
+              PNG ЖҮКТЕУ
             </a>
             <button className="button" onClick={downloadSvg}>
-              DOWNLOAD SVG
+              SVG ЖҮКТЕУ
             </button>
             <a
               className="button"
@@ -57,15 +77,17 @@ export function QRTools({ screen = false }: { screen?: boolean }) {
               target="_blank"
               rel="noreferrer"
             >
-              OPEN PRESENTATION
+              ЭКРАНДЫ АШУ
             </a>
             <button className="button" onClick={() => window.print()}>
-              PRINT QR POSTER
+              QR-КОДТЫ БАСЫП ШЫҒАРУ
             </button>
           </div>
           {url.startsWith("http:") && (
             <p className="notice">
-              Local preview QR. Deploy on HTTPS to generate the guest-facing QR.
+              Жергілікті QR-кодты ашу үшін телефонды компьютермен бір Wi-Fi
+              желісіне қосыңыз. Басқа желідегі қонақтар үшін сайтты HTTPS
+              доменінде жариялау қажет.
             </p>
           )}
         </>

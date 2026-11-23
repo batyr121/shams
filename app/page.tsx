@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import {
@@ -12,7 +12,6 @@ import {
   ChevronDown,
   Ticket,
   Music2,
-  Camera,
   X,
 } from "lucide-react";
 import {
@@ -22,16 +21,28 @@ import {
   Countdown,
   useSettings,
 } from "@/components/shared";
-import { db, defaultProgram, Program } from "@/lib/db";
+import { defaultProgram, Program } from "@/lib/db";
+import { api } from "@/lib/api";
+import { eventDate, eventTime, eventWeekday } from "@/lib/event-time";
+const eventPhotos = [
+  {
+    id: "shamshi-dance-floor",
+    url: "/images/shamshi-dance-floor.jpg",
+    caption: "Кеш ырғағы",
+  },
+  {
+    id: "shamshi-evening",
+    url: "/images/shamshi-evening.jpg",
+    caption: "Шәмші Балының сәттері",
+  },
+];
 export default function Home() {
   const [entered, setEntered] = useState(false);
   const [intro, setIntro] = useState(false);
-  const [gallery, setGallery] = useState<
-    { id: string; url: string; caption: string }[]
-  >([]);
+  const [gallery, setGallery] =
+    useState<{ id: string; url: string; caption: string }[]>(eventPhotos);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [program, setProgram] = useState<Program[]>(defaultProgram);
-  const reduced = useReducedMotion();
   const curtains = useRef<HTMLDivElement>(null);
   const s = useSettings();
   useEffect(() => {
@@ -41,43 +52,44 @@ export default function Home() {
     );
     gsap.registerPlugin(ScrollTrigger);
     const ctx = gsap.context(() => {
-      gsap.utils
-        .toArray<HTMLElement>(".reveal")
-        .forEach((el) =>
-          gsap.fromTo(
-            el,
-            { y: 30, opacity: 0 },
-            {
-              y: 0,
-              opacity: 1,
-              duration: 1,
-              scrollTrigger: { trigger: el, start: "top 92%" },
-            },
-          ),
-        );
+      gsap.utils.toArray<HTMLElement>(".reveal").forEach((el) =>
+        gsap.fromTo(
+          el,
+          { y: 30, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 1,
+            scrollTrigger: { trigger: el, start: "top 92%" },
+          },
+        ),
+      );
     });
-    if (db) {
-      db.from("event_program")
-        .select("*")
-        .order("sort_order")
-        .then(({ data }) => {
-          if (data?.length) setProgram(data);
-        });
-      db.from("gallery_images")
-        .select("*")
-        .order("sort_order")
-        .then(({ data }) => {
-          if (data)
-            setGallery(
-              data.map((x) => ({
-                ...x,
-                url: process.env.NEXT_PUBLIC_SUPABASE_URL + x.url,
-              })),
-            );
-        });
-    }
+    api<Program[]>("program")
+      .then((data) => {
+        if (data.length) setProgram(data);
+      })
+      .catch(() => {});
+    api<{ id: string; url: string; caption: string }[]>("gallery")
+      .then((data) =>
+        setGallery([
+          ...eventPhotos,
+          ...data.filter(
+            (item) => !eventPhotos.some((photo) => photo.url === item.url),
+          ),
+        ]),
+      )
+      .catch(() => {});
     return () => ctx.revert();
   }, []);
+  useEffect(() => {
+    if (!lightbox) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightbox(null);
+    };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [lightbox]);
   function enter() {
     setEntered(true);
     sessionStorage.setItem("ball-entered", "1");
@@ -107,23 +119,23 @@ export default function Home() {
               setIntro(false);
             }}
           >
-            Skip introduction
+            Кіріспені өткізу
           </button>
           <motion.div
             animate={{ opacity: entered ? 0 : 1 }}
             className="invitation"
           >
             <Crown size={45} />
-            <p className="eyebrow">YOU ARE INVITED</p>
+            <p className="eyebrow">СІЗДІ БАЛҒА ШАҚЫРАМЫЗ</p>
             <h1>
-              THE
-              <br />
-              GRAND BALL
+              <span>Шәмші</span>
+              Қайырымдылық Балы
+              <small>2026</small>
             </h1>
             <Ornament />
-            <p>A night beyond the ordinary.</p>
+            <p>Әдеттегіден ерекше кеш.</p>
             <button className="button filled" onClick={enter}>
-              ENTER THE BALL <Sparkles size={16} />
+              БАЛҒА ҚОШ КЕЛДІҢІЗ <Sparkles size={16} />
             </button>
           </motion.div>
         </div>
@@ -151,108 +163,79 @@ export default function Home() {
           </div>
           <div className="hero-content">
             <motion.div
-              initial={{ opacity: 0, y: 15 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 1.5 }}
             >
               <div className="edition">
-                <span /> A ROYAL NIGHT. AN UNFORGETTABLE STORY. <span />
+                <span /> САЛТАНАТТЫ КЕШ. ҰМЫТЫЛМАС ЕСТЕЛІК. <span />
               </div>
               <Crown className="hero-crown" strokeWidth={1} />
               <h1>
-                <span>THE</span>GRAND BALL
+                <span>Шәмші</span>Қайырымдылық Балы<small>2026</small>
               </h1>
               <Ornament />
               <p className="hero-subtitle">
                 An Evening of Elegance, Magic & Memories
               </p>
               <div className="hero-date">
-                <span>
-                  {new Date(s.starts_at)
-                    .toLocaleDateString("en-GB", {
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric",
-                      timeZone: "Asia/Aqtau",
-                    })
-                    .toUpperCase()}
-                </span>
+                <span>{eventDate(s.starts_at).toUpperCase()}</span>
                 <b>✦</b>
                 <span>
-                  {new Date(s.starts_at)
-                    .toLocaleDateString("en-GB", {
-                      weekday: "long",
-                      timeZone: "Asia/Aqtau",
-                    })
-                    .toUpperCase()}{" "}
-                  ·{" "}
-                  {new Date(s.starts_at).toLocaleTimeString("en-GB", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    timeZone: "Asia/Aqtau",
-                  })}
+                  {eventWeekday(s.starts_at).toUpperCase()} ·{" "}
+                  {eventTime(s.starts_at)}
                 </span>
               </div>
               <div className="hero-actions">
                 <Link href="/register-couple" className="button filled">
-                  <Ticket size={17} /> РЕГИСТРАЦИЯ ПАР
+                  <Ticket size={17} /> ЖҰП БОЛЫП ТІРКЕЛУ
                 </Link>
                 <Link href="/vote" className="button">
-                  <Crown size={17} /> ГОЛОСОВАТЬ ЗА ЛУЧШУЮ ПАРУ
+                  <Crown size={17} /> ҮЗДІК ЖҰПҚА ДАУЫС БЕРУ
                 </Link>
                 <a href="#program" className="button">
-                  <Music2 size={17} /> ПРОГРАММА БАЛА
+                  <Music2 size={17} /> КЕШ БАҒДАРЛАМАСЫ
                 </a>
               </div>
             </motion.div>
           </div>
           <a href="#countdown" className="scroll-cue">
-            LET THE EVENING UNFOLD
+            КЕШПЕН ТАНЫСЫҢЫЗ
             <ChevronDown size={18} />
           </a>
-          <span className="hero-side">EST. 2026 · MADE FOR MEMORIES</span>
+          <span className="hero-side">2026 · ЕСТЕ ҚАЛАР СӘТТЕР</span>
         </section>
         <section id="countdown" className="countdown-section reveal">
-          <p className="eyebrow">THE WAIT IS PART OF THE MAGIC</p>
+          <p className="eyebrow">ЕРЕКШЕ КЕШКЕ АЗ ҚАЛДЫ</p>
           <h2>A night worth counting down to.</h2>
           <Countdown />
           <div className="event-meta">
             <span>
               <CalendarDays size={16} />
-              {new Date(s.starts_at).toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-                timeZone: "Asia/Aqtau",
-              })}
+              {eventDate(s.starts_at)}
             </span>
             <span>
               <MapPin size={16} />
               {s.location}
             </span>
-            <span>
-              {new Date(s.starts_at).toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZone: "Asia/Aqtau",
-              })}{" "}
-              · AQTAU TIME
-            </span>
+            <span>{eventTime(s.starts_at)} · АҚТАУ УАҚЫТЫ</span>
           </div>
         </section>
         <section id="about" className="about section">
           <div className="about-art reveal">
             <img
-              src="/images/ballroom.jpg"
-              alt="An elegant reception hall illuminated by golden chandeliers"
+              src="/images/shamshi-evening.jpg"
+              alt="Шәмші Балының қонақтары би алаңында"
+              loading="lazy"
+              decoding="async"
             />
             <div className="image-border" />
             <span className="image-caption">
-              A LITTLE GRANDEUR. A LOT OF MAGIC.
+              САЛТАНАТ ПЕН ШАБЫТҚА ТОЛЫ СӘТТЕР.
             </span>
           </div>
           <div className="about-copy reveal">
-            <p className="eyebrow">MORE THAN JUST AN EVENING</p>
+            <p className="eyebrow">ЖАЙ ҒАНА КЕШ ЕМЕС</p>
             <h2>
               Some nights are
               <br />
@@ -260,41 +243,43 @@ export default function Home() {
             </h2>
             <Ornament />
             <p>
-              Beyond the everyday, an extraordinary evening awaits. Under the
-              glow of chandeliers, we come together to celebrate friendship,
-              elegance, and the moments that make our school years remarkable.
+              Алда — достықты, ізгілікті және әсемдікті тоғыстыратын ерекше кеш.
+              Бірге билеп, мектеп жылдарының ең жарқын сәттерін бірге жасайық.
             </p>
             <p>
-              {s.description} Dress your finest. Bring your people. Let the
-              night become your story.
+              {s.description} Сәнді киініп, достарыңызбен келіңіз. Бұл кеш
+              сіздің тарихыңызға айналсын.
             </p>
             <a href="#program" className="text-link">
-              DISCOVER THE EVENING <span>✧</span>
+              БАҒДАРЛАМАНЫ ҚАРАУ <span>✧</span>
             </a>
           </div>
         </section>
         <section className="dress-section reveal">
           <span className="deco">✧</span>
           <div>
-            <p className="eyebrow">DRESS FOR THE MEMORY</p>
+            <p className="eyebrow">ЕРЕКШЕ КЕШКЕ — ЕРЕКШЕ КИІМ</p>
             <h2>{s.dress_code}</h2>
-            <p>A touch of gold. A little mystery. Your own kind of elegance.</p>
+            <p>Салтанатты киім, алтын реңк және өзіңізге тән әсемдік.</p>
           </div>
           <Crown size={58} strokeWidth={0.7} />
         </section>
         <section id="program" className="section program">
           <div className="section-heading reveal">
-            <p className="eyebrow">EVERY MOMENT, BEAUTIFULLY PLANNED</p>
+            <p className="eyebrow">ӘР СӘТІ ОЙЛАСТЫРЫЛҒАН БАҒДАРЛАМА</p>
             <h2>
               The evening <em>unfolds.</em>
             </h2>
             <Ornament />
-            <p>From the first hello to the final dance.</p>
+            <p>Алғашқы вальстен соңғы биге дейін.</p>
           </div>
           <div className="timeline">
             {program.map((p, i) => (
               <div className="timeline-row reveal" key={i}>
-                <time>{p.time}</time>
+                <time>
+                  {p.time}
+                  {p.end_time && <>–{p.end_time}</>}
+                </time>
                 <span className="timeline-dot">✧</span>
                 <div>
                   <h3>{p.title}</h3>
@@ -313,95 +298,74 @@ export default function Home() {
             ))}
           </div>
           <p className="fine">
-            Program times are in Asia/Aqtau (UTC+5). The evening may hold a few
-            surprises.
+            Уақыт Ақтау қаласының уақыт белдеуімен көрсетілген (UTC+5).
           </p>
         </section>
         <section className="competition">
           <div className="competition-glow" />
           <div className="reveal">
             <Crown size={49} strokeWidth={1} />
-            <p className="eyebrow">TWO HEARTS. ONE ROYAL MOMENT.</p>
+            <p className="eyebrow">ЕКІ ЖҮРЕК. БІР ЕРЕКШЕ СӘТ.</p>
             <h2>
-              Who will wear
+              Who will be the next
               <br />
-              the <em>crown?</em>
+              <em>KING &amp; QUEEN?</em>
             </h2>
             <p>
-              The dance. The chemistry. The unforgettable presence.
+              Әсем би. Жарасымды жұп. Ұмытылмас әсер.
               <br />
-              Celebrate the couple who makes the evening their own.
+              Кештің KING & QUEEN атағына лайық жұпты бірге таңдайық.
             </p>
             <div className="hero-actions">
               <Link className="button filled" href="/register-couple">
-                REGISTER AS A COUPLE <Sparkles size={16} />
+                ЖҰП БОЛЫП ТІРКЕЛУ <Sparkles size={16} />
               </Link>
               <Link className="button" href="/vote">
-                MEET THE COUPLES <Crown size={16} />
+                ЖҰПТАРДЫ ҚАРАУ <Crown size={16} />
               </Link>
             </div>
             <span className="fine">
-              YOUR EVENING. YOUR CHOICE. YOUR ROYAL COUPLE.
+              СЕНІҢ КЕШІҢ. СЕНІҢ ТАҢДАУЫҢ. СЕНІҢ ҮЗДІК ЖҰБЫҢ.
             </span>
           </div>
         </section>
         <section id="gallery" className="section gallery">
           <div className="section-heading reveal">
-            <p className="eyebrow">MOMENTS THAT WILL STAY</p>
+            <p className="eyebrow">ЕСТЕ ҚАЛАР СӘТТЕР</p>
             <h2>
               A glimpse of <em>the magic.</em>
             </h2>
             <Ornament />
           </div>
-          {gallery.length ? (
-            <div className="gallery-grid">
-              {gallery.map((g) => (
-                <button onClick={() => setLightbox(g.url)} key={g.id}>
-                  <img src={g.url} alt={g.caption} />
-                  <span>{g.caption}</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="gallery-preview reveal">
-              <img
-                src="/images/ballroom.jpg"
-                alt="Chandeliers and candlelit tables — inspiration for the evening"
-              />
-              <div>
-                <Camera size={32} />
-                <h3>
-                  The best moments
-                  <br />
-                  are still to come.
-                </h3>
-                <p>
-                  Our evening’s photographs will appear here
-                  <br />
-                  after the ball, with participant permission.
-                </p>
-              </div>
-              <span>THE ATMOSPHERE · A PREVIEW</span>
-            </div>
-          )}
+          <div className="gallery-grid event-gallery">
+            {gallery.map((g) => (
+              <button
+                key={g.id}
+                onClick={() => setLightbox(g.url)}
+                aria-label={"Фотосуретті ашу:  " + g.caption}
+              >
+                <img
+                  src={g.url}
+                  alt={g.caption}
+                  loading="lazy"
+                  decoding="async"
+                />
+                <span>{g.caption}</span>
+              </button>
+            ))}
+          </div>
         </section>
         <section className="closing reveal">
           <Ornament />
-          <p className="eyebrow">YOUR INVITATION TO SOMETHING EXTRAORDINARY</p>
+          <p className="eyebrow">ЕРЕКШЕ КЕШКЕ ШАҚЫРАМЫЗ</p>
           <h2>
             Shall we <em>dance?</em>
           </h2>
           <p>
-            {new Date(s.starts_at).toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-              timeZone: "Asia/Aqtau",
-            })}{" "}
-            · {s.location}
+            {eventDate(s.starts_at)} · {s.location}
           </p>
           <Link className="button filled" href="/register-couple">
-            BE PART OF THE MAGIC <Sparkles size={16} />
+            КЕШКЕ ҚАТЫСУ <Sparkles size={16} />
           </Link>
         </section>
       </main>
@@ -411,13 +375,17 @@ export default function Home() {
           className="modal"
           role="dialog"
           aria-modal="true"
-          aria-label="Gallery photograph"
+          aria-label="Фотогалерея"
           onClick={() => setLightbox(null)}
         >
-          <button className="icon close" aria-label="Close photograph">
+          <button className="icon close" aria-label="Фотосуретті жабу">
             <X />
           </button>
-          <img className="lightbox" src={lightbox} alt="Ball photograph" />
+          <img
+            className="lightbox"
+            src={lightbox}
+            alt="Балдан естелік фотосурет"
+          />
         </div>
       )}
     </>

@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
   title: {
-    default: "The Grand Ball — An Evening to Remember",
-    template: "%s | The Grand Ball",
+    default: "Шәмші Қайырымдылық Балы 2026",
+    template: "%s | Шәмші Қайырымдылық Балы 2026",
   },
   description:
-    "You are invited. Join The Grand Ball on November 26, 2026 for an evening of elegance, magic and memories.",
+    "Шәмші Қайырымдылық Балы 2026 — ізгілік, музыка және ұмытылмас естеліктер кеші. 26 қараша, сағат 16:00.",
   robots: { index: true, follow: true },
 };
 export default function RootLayout({
@@ -15,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="kk" data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );

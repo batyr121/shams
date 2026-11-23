@@ -1,14 +1,45 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Crown, CheckCircle2, Upload } from "lucide-react";
 import { Header, Footer, PageTitle, useSettings } from "@/components/shared";
-import { client, configured } from "@/lib/db";
+import { api, useBackend } from "@/lib/api";
 export default function Register() {
   const s = useSettings();
+  const configured = useBackend();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
+  useEffect(() => {
+    if (!file) {
+      setPreview("");
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  function selectPhoto(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0];
+    setError("");
+    if (!selected) {
+      setFile(null);
+      return;
+    }
+    if (
+      !["image/jpeg", "image/png", "image/webp"].includes(selected.type) ||
+      selected.size > 5 * 1024 * 1024
+    ) {
+      setFile(null);
+      event.target.value = "";
+      setError(
+        "Көлемі 5 МБ-тан аспайтын JPG, PNG немесе WebP фотосуретін таңдаңыз.",
+      );
+      return;
+    }
+    setFile(selected);
+  }
   const closed =
     !s.registration_open || new Date(s.registration_deadline) < new Date();
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -17,44 +48,20 @@ export default function Register() {
     setError("");
     try {
       const d = new FormData(e.currentTarget);
-      if (!file) throw Error("Please select a couple photograph.");
+      if (!file) throw Error("Жұптың фотосуретін таңдаңыз.");
       if (
         !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
         file.size > 5 * 1024 * 1024
       )
-        throw Error("Choose a JPG, PNG or WebP image under 5 MB.");
-      const sup = client();
-      const { data, error } = await sup.rpc("submit_application", {
-        p_first: String(d.get("first")),
-        p_second: String(d.get("second")),
-        p_group: String(d.get("group")),
-        p_name: String(d.get("name") || ""),
-        p_contact: String(d.get("contact")),
-        p_consent: d.get("consent") === "on",
-        p_mime: file.type,
-        p_size: file.size,
-      });
-      if (error) throw error;
-      const res = await sup.storage
-        .from("application-photos")
-        .upload(
-          `${data.id}/${data.upload_token}.${file.type.split("/")[1]}`,
-          file,
-          { contentType: file.type, upsert: false },
+        throw Error(
+          "Көлемі 5 МБ-тан аспайтын JPG, PNG немесе WebP фотосуретін таңдаңыз.",
         );
-      if (res.error) throw res.error;
-      const final = await sup.rpc("complete_application", {
-        p_id: data.id,
-        p_token: data.upload_token,
-        p_path: res.data.path,
-      });
-      if (final.error) throw final.error;
+      d.set("photo", file);
+      await api("register", { method: "POST", body: d });
       setSuccess(true);
     } catch (e) {
       setError(
-        e instanceof Error
-          ? e.message
-          : "Could not submit application. Please try again.",
+        e instanceof Error ? e.message : "Өтінім жіберілмеді. Қайта көріңіз.",
       );
     } finally {
       setBusy(false);
@@ -65,112 +72,143 @@ export default function Register() {
       <Header />
       <main className="page-shell">
         <PageTitle
-          eyebrow="YOUR STORY STARTS HERE"
-          title="РЕГИСТРАЦИЯ НА ЛУЧШУЮ ПАРУ БАЛА"
-          sub="Two people. One unforgettable evening. Enter the competition together."
+          eyebrow="СІЗДІҢ ТАРИХЫҢЫЗ ОСЫНДАН БАСТАЛАДЫ"
+          title="Couple Registration"
+          sub="Екі жүрек, бір ерекше кеш. Үздік жұп байқауына бірге қатысыңыз."
         />
         <div className="form-panel">
           {success ? (
             <div className="notice success">
               <CheckCircle2 size={45} />
-              <h2>Ваша заявка принята!</h2>
+              <h2>Application received!</h2>
               <p>
-                The organizer will review your application. Your photo appears
-                publicly only after approval.
+                Өтінімді ұйымдастырушы тексереді. Фотосурет мақұлданғаннан кейін
+                ғана жарияланады.
               </p>
             </div>
           ) : (
             <>
               {!configured && (
                 <div className="notice">
-                  Registration will be available when the organizer connects the
-                  event database.
+                  Тіркелу қызметі дайындалып жатыр. Біраз уақыттан кейін қайта
+                  кіріңіз.
                 </div>
               )}
               {closed ? (
                 <div className="empty">
                   <Crown />
-                  <h3>Registration is closed</h3>
-                  <p>
-                    Thank you for your interest. Please contact the organizer.
-                  </p>
+                  <h3>Registration closed</h3>
+                  <p>Қызығушылығыңызға рақмет. Ұйымдастырушыға хабарласыңыз.</p>
                 </div>
               ) : (
                 <form onSubmit={submit}>
                   <div className="form-grid">
                     <label className="form-field">
-                      First participant’s name
+                      Бірінші қатысушының аты-жөні
                       <input
                         name="first"
                         autoComplete="name"
                         required
                         minLength={2}
                         maxLength={80}
-                        placeholder="First & last name"
+                        placeholder="Аты-жөніңіз"
                       />
                     </label>
                     <label className="form-field">
-                      Second participant’s name
+                      Екінші қатысушының аты-жөні
                       <input
                         name="second"
                         required
                         minLength={2}
                         maxLength={80}
-                        placeholder="First & last name"
+                        placeholder="Аты-жөніңіз"
                       />
                     </label>
                     <label className="form-field">
-                      Class or group
+                      Сынып немесе топ
                       <input
                         name="group"
                         required
                         maxLength={40}
-                        placeholder="e.g. 11 A"
+                        placeholder="Мысалы: 11 А"
                       />
                     </label>
                     <label className="form-field">
-                      Couple name (optional)
+                      Жұптың атауы (міндетті емес)
                       <input
                         name="name"
                         maxLength={80}
-                        placeholder="Your name for the evening"
+                        placeholder="Жұбыңыздың атауы"
                       />
                     </label>
                     <label className="form-field full">
-                      Contact information
+                      Байланыс деректері
                       <input
                         name="contact"
                         required
                         maxLength={160}
-                        placeholder="Email or phone · visible only to organizers"
+                        placeholder="Email немесе телефон · тек ұйымдастырушы көреді"
                       />
                     </label>
-                    <label className="form-field full">
-                      Couple photograph · JPG, PNG, WebP · max. 5 MB
+                    <div className="photo-upload full">
+                      <label
+                        htmlFor="couple-photo"
+                        className="photo-upload-label"
+                      >
+                        <Upload size={28} />
+                        <strong>Жұбыңыздың фотосуретін жүктеңіз</strong>
+                        <span>
+                          Фотосурет ұйымдастырушы мақұлдағаннан кейін дауыс беру
+                          бетінде жарияланады.
+                        </span>
+                        <span className="photo-formats">
+                          JPG, PNG, WebP · 5 МБ-қа дейін
+                        </span>
+                      </label>
                       <input
+                        className="photo-file-input"
+                        id="couple-photo"
+                        name="photo"
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
                         required
-                        onChange={(e) => setFile(e.target.files?.[0] || null)}
+                        onChange={selectPhoto}
                       />
-                    </label>
+                      {preview && (
+                        <div className="photo-preview">
+                          <img
+                            src={preview}
+                            alt="Жұбыңыздың фотосуретін алдын ала қарау"
+                          />
+                          <div>
+                            <strong>{file?.name}</strong>
+                            <span>
+                              {file ? (file.size / 1024 / 1024).toFixed(2) : 0}{" "}
+                              МБ · фотосурет таңдалды
+                            </span>
+                            <label className="text-link" htmlFor="couple-photo">
+                              БАСҚА ФОТОСУРЕТ ТАҢДАУ
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <label className="check">
                     <input name="rules" type="checkbox" required />
                     <span>
-                      We agree to participate respectfully. Each authorized
-                      guest may cast one vote. The couple with the most
-                      validated votes wins; tied couples share the title unless
-                      the organizer announces a tie-break.
+                      Байқау ережелерімен келісеміз. Әр қонақ бір рет дауыс
+                      береді. Ең көп расталған дауыс жинаған жұп жеңеді. Дауыс
+                      тең болса, ұйымдастырушы қосымша шешім тәртібін
+                      жарияламаса, атақ ортақ беріледі.
                     </span>
                   </label>
                   <label className="check">
                     <input name="consent" type="checkbox" required />
                     <span>
-                      Both participants consent to publishing this photograph
-                      and our names for the competition. We have permission from
-                      a parent or guardian where required, and the right to
-                      share this image.
+                      Екі қатысушы да фотосуреті мен аты-жөнін жариялауға
+                      келіседі. Қажет жағдайда ата-ананың немесе қамқоршының
+                      рұқсаты алынды. Бұл фотосуретті жариялауға құқығымыз бар.
                     </span>
                   </label>
                   {error && (
@@ -182,12 +220,12 @@ export default function Register() {
                     className="button filled"
                     disabled={busy || !configured}
                   >
-                    {busy ? "SUBMITTING APPLICATION…" : "SUBMIT APPLICATION"}
+                    {busy ? "ӨТІНІМ ЖІБЕРІЛУДЕ…" : "ӨТІНІМ ЖІБЕРУ"}
                     <Crown size={16} />
                   </button>
                   <p className="fine">
-                    Applications are reviewed before publication. Your contact
-                    details remain private.
+                    Өтінім жарияланар алдында тексеріледі. Байланыс деректеріңіз
+                    құпия сақталады.
                   </p>
                 </form>
               )}

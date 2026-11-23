@@ -3,33 +3,36 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Crown, Maximize } from "lucide-react";
 import { useSettings, Ornament } from "@/components/shared";
-import { db, photo, Couple } from "@/lib/db";
+import { photo, Couple } from "@/lib/db";
+import { api } from "@/lib/api";
 export default function Winner() {
   const s = useSettings();
   const [count, setCount] = useState<number | null>(null);
   const [winners, setWinners] = useState<Couple[]>([]);
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    if (!s.results_published || !s.reveal_at || !db) return;
+    if (!s.results_published || !s.reveal_at) return;
     let stopped = false;
-    db.rpc("public_winners").then(({ data, error }) => {
-      if (error || stopped || !data?.length) return;
-      setWinners(data);
-      let n = 3;
-      setCount(n);
-      const timer = setInterval(() => {
-        if (stopped) {
-          clearInterval(timer);
-          return;
-        }
-        n--;
+    api<Couple[]>("winners")
+      .then((data) => {
+        if (stopped || !data?.length) return;
+        setWinners(data);
+        let n = 3;
         setCount(n);
-        if (n === 0) {
-          clearInterval(timer);
-          setRevealed(true);
-        }
-      }, 1000);
-    });
+        const timer = setInterval(() => {
+          if (stopped) {
+            clearInterval(timer);
+            return;
+          }
+          n--;
+          setCount(n);
+          if (n === 0) {
+            clearInterval(timer);
+            setRevealed(true);
+          }
+        }, 1000);
+      })
+      .catch(() => {});
     return () => {
       stopped = true;
     };
@@ -43,7 +46,7 @@ export default function Winner() {
             document.documentElement.requestFullscreen?.().catch(() => {})
           }
         >
-          <Maximize size={15} /> FULLSCREEN
+          <Maximize size={15} /> ТОЛЫҚ ЭКРАН
         </button>
       </div>
       <div className="spotlight one" />
@@ -81,8 +84,8 @@ export default function Winner() {
             <Crown size={65} style={{ margin: "auto", color: "var(--gold)" }} />
             <p className="eyebrow">
               {winners.length > 1
-                ? "A SHARED CROWN · TIED WINNERS"
-                : "ЛУЧШАЯ ПАРА БАЛА 2026"}
+                ? "ОРТАҚ ТӘЖ · ДАУЫСТАР ТЕҢ"
+                : "КЕШТІҢ KING & QUEEN ЖҰБЫ · 2026"}
             </p>
             {winners.map((c) => (
               <div key={c.id}>
@@ -100,15 +103,15 @@ export default function Winner() {
               </div>
             ))}
             <Ornament />
-            <p className="eyebrow">CONGRATULATIONS!</p>
+            <p className="eyebrow">ҚҰТТЫҚТАЙМЫЗ!</p>
           </motion.div>
         ) : (
           <>
             <Crown size={55} style={{ margin: "auto", color: "var(--gold)" }} />
-            <p className="eyebrow">THE MOMENT HAS ARRIVED</p>
-            <h1>THE GRAND BALL</h1>
+            <p className="eyebrow">КӨПТЕН КҮТКЕН СӘТ КЕЛДІ</p>
+            <h1>Шәмші Қайырымдылық Балы 2026</h1>
             <Ornament />
-            <p>The crown awaits.</p>
+            <p>Кештің KING & QUEEN жұбын бірге қарсы алайық.</p>
           </>
         )}
       </div>

@@ -2,9 +2,11 @@
 import { useState, useEffect } from "react";
 import { Crown, CheckCircle2, X } from "lucide-react";
 import { Header, Footer, PageTitle, useSettings } from "@/components/shared";
-import { db, client, Couple, photo, configured } from "@/lib/db";
+import { Couple, photo } from "@/lib/db";
+import { api, useBackend } from "@/lib/api";
 export default function Vote() {
   const s = useSettings();
+  const configured = useBackend();
   const [couples, setCouples] = useState<Couple[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -16,22 +18,30 @@ export default function Vote() {
     { couple_id: string; votes: number }[]
   >([]);
   useEffect(() => {
-    if (!db) {
-      setLoading(false);
-      return;
-    }
-    db.from("approved_couples")
-      .select("*")
-      .order("sort_order")
-      .then(({ data, error }) => {
-        if (error) setError(error.message);
-        else setCouples(data || []);
-        setLoading(false);
-      });
+    let active = true;
+    const refresh = () =>
+      api<Couple[]>("couples")
+        .then((data) => {
+          if (active) setCouples(data);
+        })
+        .catch((e) => {
+          if (active) setError(e.message);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, []);
   useEffect(() => {
-    if (s.results_published && db)
-      db.rpc("public_results").then(({ data }) => setResults(data || []));
+    if (s.results_published)
+      api<{ couple_id: string; votes: number }[]>("results")
+        .then(setResults)
+        .catch((e) => setError(e.message));
   }, [s.results_published]);
   useEffect(() => {
     if (!selected) return;
@@ -45,17 +55,19 @@ export default function Vote() {
     setBusy(true);
     setError("");
     try {
-      const { error } = await client().rpc("cast_vote", {
-        p_code: code.trim().toUpperCase(),
-        p_couple: selected!.id,
+      await api("vote", {
+        method: "POST",
+        body: JSON.stringify({
+          code: code.trim().toUpperCase(),
+          couple: selected!.id,
+        }),
       });
-      if (error) throw error;
       setSuccess(true);
       setSelected(null);
       setCode("");
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Your vote could not be submitted.",
+        e instanceof Error ? e.message : "Дауыс жіберілмеді. Қайта көріңіз.",
       );
     } finally {
       setBusy(false);
@@ -66,15 +78,15 @@ export default function Vote() {
       <Header />
       <main className="page-shell">
         <PageTitle
-          eyebrow="THE CROWN IS IN YOUR HANDS"
-          title="ЛУЧШАЯ ПАРА БАЛА"
-          sub="Выбери пару, которая заслуживает короны вечера"
+          eyebrow="КЕШТІҢ ҮЗДІК ЖҰБЫН ӨЗІҢ ТАҢДА"
+          title="KING & QUEEN"
+          sub="Кештің KING & QUEEN атағына лайық жұпқа дауыс бер."
         />
         {success ? (
           <div className="empty notice success">
             <CheckCircle2 size={48} />
-            <h2>ВАШ ГОЛОС УЧТЁН!</h2>
-            <p>Thank you for being part of the magic.</p>
+            <h2>Your vote is in!</h2>
+            <p>Дауысыңыз қабылданды. Қатысқаныңызға рақмет!</p>
           </div>
         ) : (
           <>
@@ -83,8 +95,8 @@ export default function Vote() {
                 <Crown />
                 <h3>The royal line-up is on its way.</h3>
                 <p>
-                  The organizer is preparing registrations and voting. Please
-                  check back soon.
+                  Ұйымдастырушы тіркелу мен дауыс беруді дайындап жатыр.
+                  Кейінірек қайта кіріңіз.
                 </p>
               </div>
             )}
@@ -97,38 +109,40 @@ export default function Vote() {
                   textAlign: "center",
                 }}
               >
-                Voting is {s.voting_status}.{" "}
                 {s.voting_status === "paused"
-                  ? "The organizer will resume voting shortly."
-                  : "Please wait for the organizer’s announcement."}
+                  ? "Дауыс беру уақытша тоқтатылды."
+                  : "Дауыс беру жабық."}{" "}
+                {s.voting_status === "paused"
+                  ? "Ұйымдастырушы дауыс беруді жақында жалғастырады."
+                  : "Ұйымдастырушының хабарландыруын күтіңіз."}
               </div>
             )}
             {configured && s.voting_status === "open" && (
               <div className="vote-code">
                 <label htmlFor="guest-code">
-                  YOUR ONE-TIME GUEST CODE
+                  ҚОНАҚТЫҢ БІР РЕТТІК КОДЫ
                   <input
                     id="guest-code"
                     value={code}
                     onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    placeholder="ENTER YOUR TICKET CODE"
-                    minLength={12}
-                    maxLength={64}
+                    placeholder="БИЛЕТТЕГІ КОДТЫ ЕНГІЗІҢІЗ"
+                    minLength={20}
+                    maxLength={20}
                     autoComplete="off"
                   />
                 </label>
                 <p className="fine">
-                  Find your personal code on your guest ticket. One guest. One
-                  vote.
+                  Билеттегі кодты енгізіп, фотосуреттен жұпты таңдаңыз және
+                  дауысыңызды растаңыз. Бір қонақ — бір дауыс.
                 </p>
               </div>
             )}
-            {loading && <p className="fine">Preparing the royal line-up…</p>}
+            {loading && <p className="fine">Жұптар тізімі жүктелуде…</p>}
             {configured && !loading && !couples.length && (
               <div className="empty">
                 <Crown />
                 <h3>The stage awaits its couples.</h3>
-                <p>Approved entries will appear here.</p>
+                <p>Мақұлданған жұптар осы жерде көрсетіледі.</p>
               </div>
             )}
             <div className="couples-grid">
@@ -141,7 +155,7 @@ export default function Vote() {
                     />
                   )}
                   <p className="eyebrow">
-                    COUPLE №{String(c.number).padStart(2, "0")}
+                    ЖҰП №{String(c.number).padStart(2, "0")}
                   </p>
                   <h3>
                     {c.first_name} & {c.second_name}
@@ -150,20 +164,21 @@ export default function Vote() {
                   {s.results_published && (
                     <p>
                       {results.find((r) => r.couple_id === c.id)?.votes || 0}{" "}
-                      validated votes
+                      расталған дауыс
                     </p>
                   )}
                   <button
                     className="button"
                     disabled={
-                      s.voting_status !== "open" || code.trim().length < 12
+                      s.voting_status !== "open" ||
+                      !/^[A-F0-9]{20}$/.test(code.trim())
                     }
                     onClick={() => {
                       setError("");
                       setSelected(c);
                     }}
                   >
-                    ГОЛОСОВАТЬ <Crown size={15} />
+                    ДАУЫС БЕРУ <Crown size={15} />
                   </button>
                 </article>
               ))}
@@ -187,11 +202,13 @@ export default function Vote() {
           <div className="dialog">
             <Crown size={40} />
             <h2 id="confirm-title">Your royal choice</h2>
-            <p>Вы уверены, что хотите проголосовать за эту пару?</p>
+            <p>Осы жұпқа дауыс бергіңіз келетініне сенімдісіз бе?</p>
             <h3>
               {selected.first_name} & {selected.second_name}
             </h3>
-            <p>This vote is final. Your guest code can be used only once.</p>
+            <p>
+              Дауысты өзгерту мүмкін емес. Қонақ коды бір рет қана қолданылады.
+            </p>
             {error && (
               <div className="notice error" role="alert">
                 {error}
@@ -203,14 +220,14 @@ export default function Vote() {
               disabled={busy}
               onClick={vote}
             >
-              {busy ? "SUBMITTING…" : "Подтвердить голос"}
+              {busy ? "ЖІБЕРІЛУДЕ…" : "ДАУЫСТЫ РАСТАУ"}
             </button>
             <button
               className="button"
               disabled={busy}
               onClick={() => setSelected(null)}
             >
-              Отмена
+              БАС ТАРТУ
             </button>
           </div>
         </div>

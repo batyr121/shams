@@ -2,21 +2,15 @@
 import Link from "next/link";
 import { Crown, Menu, X, Instagram, Music2 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { db, defaults, Settings } from "@/lib/db";
+import { defaults, Settings } from "@/lib/db";
+import { api } from "@/lib/api";
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(defaults);
   useEffect(() => {
-    if (!db) return;
-    const refresh = () => {
-      db!
-        .from("public_event_settings")
-        .select("*")
-        .eq("id", 1)
-        .single()
-        .then(({ data }) => {
-          if (data) setSettings(data);
-        });
-    };
+    const refresh = () =>
+      api<Settings>("event")
+        .then(setSettings)
+        .catch(() => {});
     refresh();
     const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
@@ -30,27 +24,27 @@ export function Header() {
       <Link href="/" className="brand">
         <Crown size={25} />
         <span>
-          THE GRAND BALL<small>AN EVENING TO REMEMBER</small>
+          Шәмші Қайырымдылық Балы 2026<small>ЕСТЕ ҚАЛАР ЕРЕКШЕ КЕШ</small>
         </span>
       </Link>
-      <nav className={open ? "open" : ""} aria-label="Main navigation">
+      <nav className={open ? "open" : ""} aria-label="Негізгі мәзір">
         <Link onClick={() => setOpen(false)} href="/#about">
-          The evening
+          Кеш туралы
         </Link>
         <Link onClick={() => setOpen(false)} href="/#program">
-          The program
+          Бағдарлама
         </Link>
-        <Link href="/vote">Best couple</Link>
+        <Link href="/vote">Үздік жұп</Link>
         <Link onClick={() => setOpen(false)} href="/#gallery">
-          Gallery
+          Фотогалерея
         </Link>
       </nav>
       <Link className="button small header-cta" href="/register-couple">
-        BE PART OF THE MAGIC <span>✧</span>
+        КЕШКЕ ҚАТЫСУ <span>✧</span>
       </Link>
       <button
         className="menu icon"
-        aria-label="Toggle navigation"
+        aria-label="Мәзірді ашу немесе жабу"
         onClick={() => setOpen(!open)}
       >
         {open ? <X /> : <Menu />}
@@ -64,17 +58,17 @@ export function Footer() {
       <Link className="brand" href="/">
         <Crown />
         <span>
-          THE GRAND BALL<small>AN EVENING TO REMEMBER</small>
+          Шәмші Қайырымдылық Балы 2026<small>ЕСТЕ ҚАЛАР ЕРЕКШЕ КЕШ</small>
         </span>
       </Link>
       <p>
-        Some nights become memories.
+        Кейбір кештер естелікке айналады.
         <br />
-        This one becomes a story.
+        Ал бұл кеш өз тарихын жазады.
       </p>
       <div>
-        <Link href="/admin">Organizer access</Link>
-        <span>© 2026 THE GRAND BALL</span>
+        <Link href="/admin">Ұйымдастырушыға кіру</Link>
+        <span>© 2026 Шәмші Қайырымдылық Балы 2026</span>
       </div>
     </footer>
   );
@@ -111,7 +105,7 @@ export function Countdown() {
       {values.map((v, i) => (
         <div key={i}>
           <strong>{String(v).padStart(2, "0")}</strong>
-          <span>{["DAYS", "HOURS", "MINUTES", "SECONDS"][i]}</span>
+          <span>{["КҮН", "САҒАТ", "МИНУТ", "СЕКУНД"][i]}</span>
         </div>
       ))}
     </div>
