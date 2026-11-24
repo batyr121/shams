@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: grand_ball
+      POSTGRES_USER: ball_owner
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Required}
+    command: [postgres, -c, shared_buffers=32MB, -c, max_connections=40]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U ball_owner -d grand_ball"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 256m
+    restart: unless-stopped
+  migrate:
+    image: ${SHAMSHI_IMAGE:-shamshi-ball:8db672b}
+    environment:
+      DATABASE_URL: postgresql://ball_owner:${POSTGRES_ADMIN_PASSWORD}@postgres:5432/grand_ball
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    command:
+      [
+        sh,
+        -c,
+        "node scripts/migrate.mjs && node scripts/create-app-role.mjs && node scripts/create-admin.mjs",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 256m
+  app:
+    image: ${SHAMSHI_IMAGE:-shamshi-ball:8db672b}
+    environment:
+      DATABASE_URL: postgresql://ball_app:${POSTGRES_APP_PASSWORD}@postgres:5432/grand_ball
+      APP_ORIGIN: ${APP_ORIGIN}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL}
+      COOKIE_SECURE: ${COOKIE_SECURE}
+      NODE_OPTIONS: --max-old-space-size=384
+    ports:
+      - "127.0.0.1:3060:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 1.0
+    restart: unless-stopped
+volumes:
+  postgres_data:
