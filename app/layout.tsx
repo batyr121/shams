@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { MusicPlayer } from "@/components/music-player";
 export const metadata: Metadata = {
   title: {
     default: "Шәмші Қайырымдылық Балы 2026",
@@ -16,7 +17,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="kk" data-scroll-behavior="smooth">
-      <body>{children}</body>
+      <body>
+        {children}
+        <MusicPlayer />
+      </body>
     </html>
   );
 }

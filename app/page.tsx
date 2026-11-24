@@ -92,6 +92,7 @@ export default function Home() {
   }, [lightbox]);
   function enter() {
     setEntered(true);
+    window.dispatchEvent(new Event("shamshi:enter"));
     sessionStorage.setItem("ball-entered", "1");
     gsap.to(".curtain.left", {
       xPercent: -105,
