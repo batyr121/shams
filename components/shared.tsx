@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { Crown, Menu, X, Instagram, Music2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { defaults, Settings } from "@/lib/db";
@@ -54,23 +55,55 @@ export function Header() {
 }
 export function Footer() {
   return (
-    <footer>
-      <Link className="brand" href="/">
-        <Crown />
-        <span>
-          Шәмші Қайырымдылық Балы 2026<small>ЕСТЕ ҚАЛАР ЕРЕКШЕ КЕШ</small>
-        </span>
-      </Link>
-      <p>
-        Кейбір кештер естелікке айналады.
-        <br />
-        Ал бұл кеш өз тарихын жазады.
-      </p>
-      <div>
-        <Link href="/admin">Ұйымдастырушыға кіру</Link>
-        <span>© 2026 Шәмші Қайырымдылық Балы 2026</span>
-      </div>
-    </footer>
+    <>
+      <section className="organizers" aria-labelledby="organizers-title">
+        <p className="eyebrow">КЕШТІ ҰЙЫМДАСТЫРУШЫЛАР</p>
+        <h2 id="organizers-title">The people behind the magic</h2>
+        <div className="organizer-logos">
+          <figure>
+            <div className="organizer-logo council-logo">
+              <Image
+                src="/images/student-council.jpg"
+                alt="NIS Student Council"
+                width={1354}
+                height={1536}
+                sizes="(max-width: 600px) 280px, 320px"
+              />
+            </div>
+            <figcaption>Student Council</figcaption>
+          </figure>
+          <figure>
+            <div className="organizer-logo ministry-logo">
+              <Image
+                src="/images/digital-ai-ministry.png"
+                alt="NIS Aktau Digital And AI Ministry"
+                width={1254}
+                height={1254}
+                sizes="(max-width: 600px) 280px, 320px"
+              />
+            </div>
+            <figcaption>Digital &amp; AI Ministry</figcaption>
+          </figure>
+        </div>
+      </section>
+      <footer>
+        <Link className="brand" href="/">
+          <Crown />
+          <span>
+            Шәмші Қайырымдылық Балы 2026<small>ЕСТЕ ҚАЛАР ЕРЕКШЕ КЕШ</small>
+          </span>
+        </Link>
+        <p>
+          Кейбір кештер естелікке айналады.
+          <br />
+          Ал бұл кеш өз тарихын жазады.
+        </p>
+        <div>
+          <Link href="/admin">Ұйымдастырушыға кіру</Link>
+          <span>© 2026 Шәмші Қайырымдылық Балы 2026</span>
+        </div>
+      </footer>
+    </>
   );
 }
 export function Ornament() {
