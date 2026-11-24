@@ -125,15 +125,18 @@ export default function Vote() {
                     id="guest-code"
                     value={code}
                     onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    placeholder="БИЛЕТТЕГІ КОДТЫ ЕНГІЗІҢІЗ"
-                    minLength={20}
+                    placeholder="МЫСАЛЫ: A7K3"
+                    minLength={4}
                     maxLength={20}
+                    autoCapitalize="characters"
+                    spellCheck={false}
                     autoComplete="off"
                   />
                 </label>
                 <p className="fine">
-                  Билеттегі кодты енгізіп, фотосуреттен жұпты таңдаңыз және
-                  дауысыңызды растаңыз. Бір қонақ — бір дауыс.
+                  Ұйымдастырушы берген 4 таңбалы кодты енгізіңіз, фотосуреттен
+                  жұпты таңдап, дауысыңызды растаңыз. Дауыс қабылданғаннан кейін
+                  код жарамсыз болады.
                 </p>
               </div>
             )}
@@ -171,7 +174,7 @@ export default function Vote() {
                     className="button"
                     disabled={
                       s.voting_status !== "open" ||
-                      !/^[A-F0-9]{20}$/.test(code.trim())
+                      !/^(?:[A-Z0-9]{4}|[A-F0-9]{20})$/.test(code.trim())
                     }
                     onClick={() => {
                       setError("");

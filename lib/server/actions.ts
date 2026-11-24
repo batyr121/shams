@@ -154,13 +154,22 @@ export async function adminAction(
         if (!sid)
           throw new HttpError(409, "There is no active voting session.");
         const codes: string[] = [];
-        for (let i = 0; i < count; i++) {
-          const code = randomBytes(10).toString("hex").toUpperCase();
-          await c.query(
-            "INSERT INTO voting_tickets(session_id,token_hash) VALUES($1,$2)",
+        const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        let attempts = 0;
+        while (codes.length < count) {
+          if (++attempts > count * 20)
+            throw new HttpError(
+              409,
+              "Code generation is busy. Please try again.",
+            );
+          const code = Array.from(randomBytes(4), (b) => alphabet[b % 32]).join(
+            "",
+          );
+          const inserted = await c.query(
+            "INSERT INTO voting_tickets(session_id,token_hash) VALUES($1,$2) ON CONFLICT(token_hash) DO NOTHING RETURNING id",
             [sid, digest(code)],
           );
-          codes.push(code);
+          if (inserted.rowCount) codes.push(code);
         }
         data = codes;
         break;

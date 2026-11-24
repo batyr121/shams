@@ -6,8 +6,10 @@ const errors: Record<string, string> = {
   "This guest code is invalid, revoked, or already used.":
     "Бұл код жарамсыз, қайтарылған немесе бұрын қолданылған.",
   "This couple is not eligible.": "Бұл жұп дауыс беруге қатыспайды.",
-  "Enter the 20-character code on your ticket.":
-    "Билеттегі 20 таңбалы кодты енгізіңіз.",
+  "Enter your 4-character voting code.":
+    "4 таңбалы дауыс беру кодын енгізіңіз.",
+  "Code generation is busy. Please try again.":
+    "Кодтар жасалмады. Қайта көріңіз.",
   "Too many attempts. Please try again later.":
     "Тым көп әрекет жасалды. Біраз уақыттан кейін қайта көріңіз.",
   "Close voting before publishing results.":

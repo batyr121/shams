@@ -60,7 +60,7 @@ test("QR destination shows couple photographs and submits the selected ticket vo
   });
   await page.goto("/vote");
   await expect(page.getByAltText("Айдана and Әлихан")).toBeVisible();
-  await page.locator("#guest-code").fill("ABCDEF12345678901234");
+  await page.locator("#guest-code").fill("a7k3");
   await page.getByRole("button", { name: "ДАУЫС БЕРУ", exact: true }).click();
   await page
     .getByRole("button", { name: "ДАУЫСТЫ РАСТАУ", exact: true })
@@ -68,7 +68,7 @@ test("QR destination shows couple photographs and submits the selected ticket vo
   await expect(
     page.getByRole("heading", { name: "Your vote is in!" }),
   ).toBeVisible();
-  expect(submitted).toEqual({ code: "ABCDEF12345678901234", couple: pair.id });
+  expect(submitted).toEqual({ code: "A7K3", couple: pair.id });
 });
 test("projector keeps a 16:9 stage with actual ranking on the left and scannable QR on the right", async ({
   page,
@@ -126,4 +126,53 @@ test("the new event name appears in the invitation and page metadata", async ({
   await expect(page.locator(".header .brand")).toContainText(
     "Шәмші Қайырымдылық Балы 2026",
   );
+});
+
+test("organizer generates short codes and opens voting from its management panel", async ({
+  page,
+}) => {
+  const settings = { ...defaults, voting_status: "closed" };
+  await page.route("**/api/auth/session", (r) =>
+    r.fulfill({
+      json: { user: { id: pair.id, email: "organizer@example.com" } },
+    }),
+  );
+  await page.route("**/api/admin/data", (r) =>
+    r.fulfill({
+      json: {
+        settings,
+        couples: [],
+        results: [],
+        tickets: [],
+        program: [],
+        gallery: [],
+      },
+    }),
+  );
+  let generated: unknown;
+  await page.route("**/api/admin/actions/generate_tickets", (r) => {
+    generated = r.request().postDataJSON();
+    return r.fulfill({ json: ["A7K3", "B2M9"] });
+  });
+  await page.route("**/api/admin/actions/set_event_state", (r) => {
+    const data = r.request().postDataJSON();
+    settings.voting_status = data.p_patch.voting_status;
+    return r.fulfill({ json: null });
+  });
+  await page.goto("/admin");
+  await page
+    .getByRole("button", { name: "Дауыс беруді басқару", exact: true })
+    .click();
+  await page.getByLabel("Жасалатын кодтар саны").fill("2");
+  await page
+    .getByRole("button", { name: "4 ТАҢБАЛЫ КОДТАР ЖАСАУ", exact: true })
+    .click();
+  await expect(page.locator(".ticket strong")).toHaveText(["A7K3", "B2M9"]);
+  expect(generated).toEqual({ p_count: 2 });
+  await page
+    .getByRole("button", { name: "ДАУЫС БЕРУДІ АШУ", exact: true })
+    .click();
+  await expect(
+    page.getByText("Қазіргі мәртебе: АШЫҚ", { exact: true }),
+  ).toBeVisible();
 });

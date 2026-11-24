@@ -507,31 +507,45 @@ export default function Admin() {
                   Дауыс беруді ашыңыз, үзіліс жасаңыз немесе жабыңыз.
                   Жеңімпаздарды жариялар алдында дауыс беруді жабу қажет.{" "}
                 </p>
+                <p role="status">
+                  Қазіргі мәртебе: {statusLabel(settings.voting_status)}
+                </p>
                 <div className="actions">
                   <button
                     className="button filled"
+                    disabled={busy || settings.voting_status === "open"}
                     onClick={() => status("open")}
                   >
                     {settings.voting_status === "paused"
                       ? "ДАУЫС БЕРУДІ ЖАЛҒАСТЫРУ"
                       : "ДАУЫС БЕРУДІ АШУ"}
                   </button>
-                  <button className="button" onClick={() => status("paused")}>
+                  <button
+                    className="button"
+                    disabled={busy || settings.voting_status !== "open"}
+                    onClick={() => status("paused")}
+                  >
                     {" "}
                     УАҚЫТША ТОҚТАТУ{" "}
                   </button>
-                  <button className="button" onClick={() => status("closed")}>
+                  <button
+                    className="button"
+                    disabled={busy || settings.voting_status === "closed"}
+                    onClick={() => status("closed")}
+                  >
                     {" "}
                     ДАУЫС БЕРУДІ ЖАБУ{" "}
                   </button>
                 </div>
               </div>
               <div className="admin-panel">
-                <h2>One guest. One ticket. One vote.</h2>
+                <h2>One code. One vote.</h2>
                 <p>
                   {" "}
-                  Кодтар серверде қауіпсіз жасалады және бір рет қана
-                  көрсетіледі. Оларды бірден жүктеп алыңыз.{" "}
+                  Әр код 4 таңбадан тұрады: латын әріптері мен сандар. Кодтар
+                  қайталанбайды. Қонақ дауысын растағаннан кейін код жарамсыз
+                  болады. Кодтар тек жасалған кезде көрсетіледі — оларды бірден
+                  жүктеп алыңыз.{" "}
                 </p>
                 <form
                   onSubmit={(e) => {
@@ -543,12 +557,13 @@ export default function Admin() {
                           p_count: Number(f.get("count")),
                         }),
                       );
-                    }, "Билеттер жасалды. Кодтарды қазір сақтап алыңыз.");
+                    }, "4 таңбалы кодтар жасалды. Оларды қазір сақтап алыңыз.");
                   }}
                 >
                   <div className="actions">
                     <input
                       name="count"
+                      aria-label="Жасалатын кодтар саны"
                       type="number"
                       min={1}
                       max={500}
@@ -556,7 +571,9 @@ export default function Admin() {
                       style={{ maxWidth: 120 }}
                       required
                     />
-                    <button className="button filled"> БИЛЕТТЕР ЖАСАУ </button>
+                    <button className="button filled" disabled={busy}>
+                      {busy ? "ЖАСАЛУДА…" : "4 ТАҢБАЛЫ КОДТАР ЖАСАУ"}
+                    </button>
                   </div>
                 </form>
                 <p>

@@ -291,6 +291,19 @@ test("registration stores real application and private photo atomically", async 
   assert.equal(publicCouples[0].contact, undefined);
   assert.equal((await call("media/" + photo)).status, 200);
 });
+test("generated voting codes have four unambiguous characters and never repeat across batches", async () => {
+  const first = (await action("generate_tickets", {
+    p_count: 500,
+  })) as string[];
+  const second = (await action("generate_tickets", {
+    p_count: 500,
+  })) as string[];
+  const codes = [...first, ...second];
+  assert.equal(codes.length, 1000);
+  assert.equal(new Set(codes).size, 1000);
+  for (const code of codes)
+    assert.match(code, /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/);
+});
 test("validation and closed voting produce errors without recording votes", async () => {
   const code = await ticket();
   assert.equal((await call("vote", { code, couple })).status, 409);
@@ -312,6 +325,10 @@ test("concurrent HTTP requests can redeem a ticket exactly once", async () => {
   );
   assert.equal(responses.filter((r) => r.status === 200).length, 1);
   assert.equal(responses.filter((r) => r.status === 409).length, 5);
+  assert.equal(
+    (await call("vote", { code: code.toLowerCase(), couple })).status,
+    409,
+  );
   assert.equal(await count(), 1);
   const row = (
     await pool.query(

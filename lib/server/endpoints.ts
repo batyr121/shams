@@ -190,13 +190,16 @@ export async function vote(request: Request) {
         .string()
         .trim()
         .regex(
-          /^[a-fA-F0-9]{20}$/,
-          "Enter the 20-character code on your ticket.",
+          /^(?:[a-zA-Z0-9]{4}|[a-fA-F0-9]{20})$/,
+          "Enter your 4-character voting code.",
         ),
       couple: z.string().uuid(),
     })
     .parse(await body(request));
   await limit("vote:" + v.code.toUpperCase(), 12, 60);
+  // Nginx overwrites X-Real-IP; the app is bound to loopback on the VPS.
+  const address = request.headers.get("x-real-ip");
+  if (address) await limit("vote-ip:" + address, 300, 60);
   await transaction((c) => castVote(c, v.code, v.couple));
   return json({ ok: true });
 }
